@@ -13,7 +13,9 @@ function printUsage() {
 
 Options:
   -t, --top <n>          Return the top n entries by Intelligence Index score.
-  -f, --filter <string>  Keep only models whose names contain the filter string.
+  -f, --filter <string>  Keep only models whose names contain a filter string.
+                         Separate alternatives with comma (",") for OR
+                         matching. No spaces are allowed in the filter string.
   -l, --lab              Keep only the best entry from each lab.
   -m, --model            Keep only the best entry from each model.
   -o, --open             Include open-weight models.
@@ -397,10 +399,17 @@ function filterByName(requestedSlugs, catalogBySlug, options) {
     return requestedSlugs;
   }
 
-  const filter = options.nameFilter.toLowerCase();
+  const filters = options.nameFilter
+    .toLowerCase()
+    .split(",")
+    .map((filter) => filter.trim())
+    .filter(Boolean);
   return requestedSlugs.filter((slug) => {
     const name = catalogBySlug.get(slug)?.name;
-    return typeof name === "string" && name.toLowerCase().includes(filter);
+    return (
+      typeof name === "string" &&
+      filters.some((filter) => name.toLowerCase().includes(filter))
+    );
   });
 }
 

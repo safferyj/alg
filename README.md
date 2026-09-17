@@ -43,8 +43,9 @@ models were retained and which filters reduced the set.
 ```text
 -t, --top <n>      Return the top n entries by Intelligence Index score.
 -f, --filter <string>
-                   Keep only models whose names contain the filter string
-                   (case insensitive).
+                   Keep only models whose names contain a filter string
+                   (case insensitive). Separate alternatives with comma (`,`)
+                   for OR matching. NO SPACES are allowed in the filter string.
 -l, --lab          Keep only the best entry from each lab.
 -m, --model        Keep only the best entry from each model.
 -o, --open         Include open-weight models.
@@ -58,8 +59,15 @@ Without `--url`, all models in the current Artificial Analysis catalog are used.
 With `--url`, the existing model set is preserved and all other filters are
 applied only to that set.
 
-`--filter` is a case-insensitive substring filter on model names. It can be
-combined with every other option, including `--url`.
+`--filter` is a case-insensitive substring filter on model names. Separate
+multiple alternatives with comma (`,`) to match any of them. **Do not include
+spaces in the filter string.** For example:
+
+```bash
+node alg.mjs --filter qwen3.8,qwen3.6
+```
+
+The filter can be combined with every other option, including `--url`.
 
 Without `--open` or `--closed`, both weight classes are included. Supplying both
 includes both classes explicitly. Without `--lab` or `--model`, no grouping is
