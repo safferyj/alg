@@ -22,6 +22,8 @@ Options:
   -c, --closed           Include closed-weight models.
   -n, --min <n>          Include entries with a score at least n (adjusted by -0.5).
   -x, --max <n>          Include entries with a score at most n (adjusted by -0.5).
+  -b, --before <date>    Include models released before YYYY-MM-DD (exclusive).
+  -a, --after <date>     Include models released on or after YYYY-MM-DD.
   -u, --url <url>        Preserve the models from an existing Artificial Analysis URL.
   -h, --help             Show this help.
 
@@ -207,6 +209,40 @@ function parseScore(value, option) {
   return score;
 }
 
+function isValidIsoDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    isLeapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1];
+}
+
+function parseDate(value, option) {
+  if (!isValidIsoDate(value)) {
+    throw new Error(`${option} requires a valid date in YYYY-MM-DD format.`);
+  }
+  return value;
+}
+
 function parseArguments(args) {
   const options = {
     inputUrl: null,
@@ -218,6 +254,8 @@ function parseArguments(args) {
     closed: false,
     minScore: null,
     maxScore: null,
+    beforeDate: null,
+    afterDate: null,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -285,6 +323,24 @@ function parseArguments(args) {
     } else if (arg.startsWith("--max=")) {
       options.maxScore =
         parseScore(arg.slice("--max=".length), "--max") - SCORE_DISPLAY_OFFSET;
+    } else if (arg === "-b" || arg === "--before") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error("--before requires a date in YYYY-MM-DD format.");
+      }
+      options.beforeDate = parseDate(value, "--before");
+      index += 1;
+    } else if (arg.startsWith("--before=")) {
+      options.beforeDate = parseDate(arg.slice("--before=".length), "--before");
+    } else if (arg === "-a" || arg === "--after") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error("--after requires a date in YYYY-MM-DD format.");
+      }
+      options.afterDate = parseDate(value, "--after");
+      index += 1;
+    } else if (arg.startsWith("--after=")) {
+      options.afterDate = parseDate(arg.slice("--after=".length), "--after");
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -296,6 +352,14 @@ function parseArguments(args) {
     options.minScore > options.maxScore
   ) {
     throw new Error("--min cannot be greater than --max.");
+  }
+
+  if (
+    options.afterDate !== null &&
+    options.beforeDate !== null &&
+    options.afterDate >= options.beforeDate
+  ) {
+    throw new Error("--after must be earlier than --before.");
   }
 
   return options;
@@ -413,6 +477,23 @@ function filterByName(requestedSlugs, catalogBySlug, options) {
   });
 }
 
+function filterByReleaseDate(requestedSlugs, catalogBySlug, options) {
+  if (options.beforeDate === null && options.afterDate === null) {
+    return requestedSlugs;
+  }
+
+  return requestedSlugs.filter((slug) => {
+    const releaseDate = catalogBySlug.get(slug)?.releaseDate;
+    if (!isValidIsoDate(releaseDate)) {
+      return false;
+    }
+    return (
+      (options.beforeDate === null || releaseDate < options.beforeDate) &&
+      (options.afterDate === null || releaseDate >= options.afterDate)
+    );
+  });
+}
+
 function filterByScore(requestedSlugs, scoresBySlug, options) {
   if (options.minScore === null && options.maxScore === null) {
     return requestedSlugs;
@@ -477,7 +558,12 @@ async function main() {
     throw new Error("No models remain after applying the name filter.");
   }
 
-  const weightFiltered = filterByWeight(nameFiltered, scoresBySlug, options);
+  const dateFiltered = filterByReleaseDate(nameFiltered, catalogBySlug, options);
+  if (dateFiltered.length === 0) {
+    throw new Error("No models remain after applying the release-date filter.");
+  }
+
+  const weightFiltered = filterByWeight(dateFiltered, scoresBySlug, options);
   if (weightFiltered.length === 0) {
     throw new Error("No models remain after applying the weight-class filter.");
   }
@@ -517,9 +603,14 @@ async function main() {
       `Excluded ${requestedSlugs.length - nameFiltered.length} models by name filter.`,
     );
   }
-  if (weightFiltered.length < nameFiltered.length) {
+  if (dateFiltered.length < nameFiltered.length) {
     console.error(
-      `Excluded ${nameFiltered.length - weightFiltered.length} models by weight class.`,
+      `Excluded ${nameFiltered.length - dateFiltered.length} models by release-date filter.`,
+    );
+  }
+  if (weightFiltered.length < dateFiltered.length) {
+    console.error(
+      `Excluded ${dateFiltered.length - weightFiltered.length} models by weight class.`,
     );
   }
   if (scoreFiltered.length < weightFiltered.length) {

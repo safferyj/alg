@@ -41,18 +41,19 @@ models were retained and which filters reduced the set.
 ## Options
 
 ```text
--t, --top <n>      Return the top n entries by Intelligence Index score.
--f, --filter <string>
-                   Keep only models whose names contain a filter string
-                   (case insensitive). Separate alternatives with comma (`,`)
-                   for OR matching. NO SPACES are allowed in the filter string.
--l, --lab          Keep only the best entry from each lab.
--m, --model        Keep only the best entry from each model.
--o, --open         Include open-weight models.
--c, --closed       Include closed-weight models.
--n, --min <n>      Include entries with a score greater than or equal to n.
--x, --max <n>      Include entries with a score less than or equal to n.
--u, --url <url>    Use the models from an existing Artificial Analysis URL.
+-t, --top <n>          Return the top n entries by Intelligence Index score.
+-f, --filter <string>  Keep only models whose names contain a filter string.
+                       Separate alternatives with comma (",") for OR
+                       matching. No spaces are allowed in the filter string.
+-l, --lab              Keep only the best entry from each lab.
+-m, --model            Keep only the best entry from each model.
+-o, --open             Include open-weight models.
+-c, --closed           Include closed-weight models.
+-n, --min <n>          Include entries with a score at least n (adjusted by -0.5).
+-x, --max <n>          Include entries with a score at most n (adjusted by -0.5).
+-b, --before <date>    Include models released before YYYY-MM-DD (exclusive).
+-a, --after <date>     Include models released on or after YYYY-MM-DD.
+-u, --url <url>        Use the models from an existing Artificial Analysis URL.
 ```
 
 Without `--url`, all models in the current Artificial Analysis catalog are used.
@@ -86,6 +87,14 @@ node alg.mjs --min 40 --max 50 --model --top 10
 
 Entries without a numeric score are excluded when either threshold is supplied.
 
+`--before` is an exclusive release-date filter and `--after` is inclusive. Both
+require a valid ISO calendar date in `YYYY-MM-DD` format. They can be combined
+to define a release-date range:
+
+```bash
+node alg.mjs --after 2025-01-01 --before 2026-01-01
+```
+
 ## Filter an existing model set
 
 Use `--url` when an existing Artificial Analysis link should act as a
@@ -108,7 +117,8 @@ node alg.mjs --url "https://artificialanalysis.ai/?models=..." --open
 
 1. Fetches the current Artificial Analysis model catalog and Intelligence Index
    scores.
-2. Applies the requested open/closed weight-class and score-range filters.
+2. Applies the requested release-date, open/closed weight-class, and score-range
+   filters.
 3. If requested, groups models by release family with `--model` or by lab with
    `--lab`, keeping the entry with the highest numeric Intelligence Index score
    in each group.
