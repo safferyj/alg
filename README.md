@@ -1,7 +1,8 @@
 # Artificial Analysis Link Generator
 
 This script creates an Artificial Analysis Intelligence Index URL using the
-requested model, lab, name, weight-class, and count filters.
+requested model, lab, name, release-date, size-class, weight-class, and count
+filters.
 
 ## Requirements
 
@@ -53,6 +54,12 @@ models were retained and which filters reduced the set.
 -x, --max <n>          Include entries with a score at most n (adjusted by -0.5).
 -b, --before <date>    Include models released before YYYY-MM-DD (exclusive).
 -a, --after <date>     Include models released on or after YYYY-MM-DD.
+-s, --size <string>    Keep only models in the specified AA size classes:
+                       tiny, small, medium, large, unknown.
+                       Separate alternatives with comma (",") for OR
+                       matching. No spaces are allowed in the size string.
+                       Some, but not all, closed-source models have a
+                       known AA size class.
 -u, --url <url>        Use the models from an existing Artificial Analysis URL.
 ```
 
@@ -95,6 +102,17 @@ to define a release-date range:
 node alg.mjs --after 2025-01-01 --before 2026-01-01
 ```
 
+`--size` is case-insensitive. Separate multiple alternatives with comma (`,`) to
+match any of them. **Do not include spaces in the size string.** Accepted values
+are `tiny`, `small`, `medium`, `large`, and `unknown`. `unknown` includes models
+for which AA does not provide a size class. Some, but not all, closed-source
+models have a known AA size class, so closed-source models can appear in the
+named classes as well as in `unknown`:
+
+```bash
+node alg.mjs --size large,medium
+```
+
 ## Filter an existing model set
 
 Use `--url` when an existing Artificial Analysis link should act as a
@@ -117,14 +135,14 @@ node alg.mjs --url "https://artificialanalysis.ai/?models=..." --open
 
 1. Fetches the current Artificial Analysis model catalog and Intelligence Index
    scores.
-2. Applies the requested release-date, open/closed weight-class, and score-range
-   filters.
+2. Applies the requested release-date, size-class, open/closed weight-class, and
+   score-range filters.
 3. If requested, groups models by release family with `--model` or by lab with
    `--lab`, keeping the entry with the highest numeric Intelligence Index score
    in each group.
-4. If `--top` is supplied, sorts the remaining entries by Intelligence Index
-   score and keeps the top entries before printing a URL anchored to the
-   Intelligence Index section.
+4. Sorts the remaining entries by descending Intelligence Index score.
+5. If `--top` is supplied, keeps the top entries before printing a URL anchored
+   to the Intelligence Index section.
 
 If a grouping is requested and a group has no numeric score, the first catalog
 entry is retained.

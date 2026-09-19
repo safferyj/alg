@@ -6,6 +6,7 @@ import { gunzipSync } from "node:zlib";
 const SITE = "https://artificialanalysis.ai";
 const INDEX_HASH = "artificial-analysis-intelligence-index";
 const SCORE_DISPLAY_OFFSET = 0.5;
+const SIZE_CLASSES = new Set(["tiny", "small", "medium", "large", "unknown"]);
 
 function printUsage() {
   console.log(`Usage:
@@ -24,6 +25,12 @@ Options:
   -x, --max <n>          Include entries with a score at most n (adjusted by -0.5).
   -b, --before <date>    Include models released before YYYY-MM-DD (exclusive).
   -a, --after <date>     Include models released on or after YYYY-MM-DD.
+  -s, --size <string>    Keep only models in the specified AA size classes:
+                         tiny, small, medium, large, unknown.
+                         Separate alternatives with comma (",") for OR
+                         matching. No spaces are allowed in the size string.
+                         Some, but not all, closed-source models have a
+                         known AA size class.
   -u, --url <url>        Preserve the models from an existing Artificial Analysis URL.
   -h, --help             Show this help.
 
@@ -243,6 +250,19 @@ function parseDate(value, option) {
   return value;
 }
 
+function parseSizeClasses(value, option) {
+  const classes = value.split(",").map((sizeClass) => sizeClass.trim().toLowerCase());
+  const invalid = classes.filter((sizeClass) => !SIZE_CLASSES.has(sizeClass));
+  if (!value || classes.some((sizeClass) => !sizeClass) || invalid.length) {
+    const invalidValues = [...new Set(invalid)].join(", ");
+    const detail = invalidValues ? ` Invalid value(s): ${invalidValues}.` : "";
+    throw new Error(
+      `${option} requires comma-separated size classes: tiny, small, medium, large, unknown.${detail}`,
+    );
+  }
+  return new Set(classes);
+}
+
 function parseArguments(args) {
   const options = {
     inputUrl: null,
@@ -256,6 +276,7 @@ function parseArguments(args) {
     maxScore: null,
     beforeDate: null,
     afterDate: null,
+    sizeClasses: null,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -341,6 +362,15 @@ function parseArguments(args) {
       index += 1;
     } else if (arg.startsWith("--after=")) {
       options.afterDate = parseDate(arg.slice("--after=".length), "--after");
+    } else if (arg === "-s" || arg === "--size") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error("--size requires a comma-separated list of size classes.");
+      }
+      options.sizeClasses = parseSizeClasses(value, "--size");
+      index += 1;
+    } else if (arg.startsWith("--size=")) {
+      options.sizeClasses = parseSizeClasses(arg.slice("--size=".length), "--size");
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -494,6 +524,19 @@ function filterByReleaseDate(requestedSlugs, catalogBySlug, options) {
   });
 }
 
+function filterBySize(requestedSlugs, scoresBySlug, options) {
+  if (options.sizeClasses === null) {
+    return requestedSlugs;
+  }
+
+  return requestedSlugs.filter((slug) => {
+    const sizeClass = scoresBySlug.get(slug)?.sizeClass;
+    const normalizedSizeClass =
+      typeof sizeClass === "string" ? sizeClass.toLowerCase() : "unknown";
+    return options.sizeClasses.has(normalizedSizeClass);
+  });
+}
+
 function filterByScore(requestedSlugs, scoresBySlug, options) {
   if (options.minScore === null && options.maxScore === null) {
     return requestedSlugs;
@@ -563,7 +606,12 @@ async function main() {
     throw new Error("No models remain after applying the release-date filter.");
   }
 
-  const weightFiltered = filterByWeight(dateFiltered, scoresBySlug, options);
+  const sizeFiltered = filterBySize(dateFiltered, scoresBySlug, options);
+  if (sizeFiltered.length === 0) {
+    throw new Error("No models remain after applying the size-class filter.");
+  }
+
+  const weightFiltered = filterByWeight(sizeFiltered, scoresBySlug, options);
   if (weightFiltered.length === 0) {
     throw new Error("No models remain after applying the weight-class filter.");
   }
@@ -582,8 +630,9 @@ async function main() {
   }
 
   const groupedCount = selected.length;
+  selected = sortByScore(selected, scoresBySlug);
   if (options.top !== null) {
-    selected = sortByScore(selected, scoresBySlug).slice(0, options.top);
+    selected = selected.slice(0, options.top);
   }
   if (selected.length === 0) {
     throw new Error("No models remain after applying the requested filters.");
@@ -608,9 +657,14 @@ async function main() {
       `Excluded ${nameFiltered.length - dateFiltered.length} models by release-date filter.`,
     );
   }
-  if (weightFiltered.length < dateFiltered.length) {
+  if (sizeFiltered.length < dateFiltered.length) {
     console.error(
-      `Excluded ${dateFiltered.length - weightFiltered.length} models by weight class.`,
+      `Excluded ${dateFiltered.length - sizeFiltered.length} models by size class.`,
+    );
+  }
+  if (weightFiltered.length < sizeFiltered.length) {
+    console.error(
+      `Excluded ${sizeFiltered.length - weightFiltered.length} models by weight class.`,
     );
   }
   if (scoreFiltered.length < weightFiltered.length) {
@@ -634,6 +688,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`Error: ${error.message}`);
+  const message = error.message;
+  console.error(message.startsWith("No models remain") ? message : `Error: ${message}`);
   process.exitCode = 1;
 });
