@@ -2,7 +2,7 @@
 
 This script creates an Artificial Analysis Intelligence Index URL using the
 requested model, lab, name, release-date, size-class, weight-class, and count
-filters.
+filters. It can also export the selected models as merged JSON data.
 
 ## Requirements
 
@@ -60,6 +60,7 @@ models were retained and which filters reduced the set.
                        matching. No spaces are allowed in the size string.
                        Some, but not all, closed-source models have a
                        known AA size class.
+-j, --json             Write selected models to a timestamped JSON file.
 -u, --url <url>        Use the models from an existing Artificial Analysis URL.
 ```
 
@@ -113,6 +114,53 @@ named classes as well as in `unknown`:
 node alg.mjs --size large,medium
 ```
 
+`--json` writes a merged JSON export in the current working directory while
+continuing to print the Artificial Analysis URL to standard output. The
+generated file path and any merge warnings are printed to standard error. The
+export contains the final selected models, in descending Intelligence Index
+order:
+
+```json
+{
+  "generatedAt": "2026-09-20T12:35:47",
+  "arguments": [
+    "--top", "10",
+    "--json"
+  ],
+  "intelligenceIndex": {
+    "version": "v4.3.2",
+    "changelog": {
+      "dateLa": "2026-09-19",
+      "type": "methodologyUpdated",
+      "title": "Artificial Analysis Intelligence Index v4.3.2",
+      "url": "/methodology/intelligence-benchmarking"
+    }
+  },
+  "models": []
+}
+```
+
+The `intelligenceIndex.version` value is extracted from the latest
+`methodologyUpdated` entry in the downloaded score manifest rather than being
+hard-coded. The matching source changelog entry is retained under
+`intelligenceIndex.changelog`.
+
+Each exported model is joined by slug from the catalog and manifest. Shared
+fields appear only once. The manifest supplies shared values and richer nested
+fields; catalog-only fields such as `effort` are added. If a shared value ever
+differs, the manifest value is retained and a warning is written to standard
+error. The filename uses the compact local timestamp format
+`YYYYMMDD-HHmmss`, followed by long-form flag segments such as
+`--lab--top-10`. The `--json` flag is omitted, as is the `--url` value. The
+complete invocation flags and values, including a full `--url` value, are
+retained in `arguments` metadata. The filename segments and `arguments` array
+use this canonical execution order:
+`--url`, `--filter`, `--before`, `--after`, `--size`, `--open`, `--closed`,
+`--min`, `--max`, `--model`, `--lab`, `--top`, `--json`. Every argument uses
+the full flag name, and value-taking flags are represented as separate
+flag/value entries. For readability, each flag/value pair is formatted on one
+line in the file; the parsed JSON remains the same flat argument array.
+
 ## Filter an existing model set
 
 Use `--url` when an existing Artificial Analysis link should act as a
@@ -143,6 +191,8 @@ node alg.mjs --url "https://artificialanalysis.ai/?models=..." --open
 4. Sorts the remaining entries by descending Intelligence Index score.
 5. If `--top` is supplied, keeps the top entries before printing a URL anchored
    to the Intelligence Index section.
+6. If `--json` is supplied, joins the final selected models and writes the
+   merged JSON export before printing the URL.
 
 If a grouping is requested and a group has no numeric score, the first catalog
 entry is retained.

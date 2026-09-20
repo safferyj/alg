@@ -1,15 +1,59 @@
 #!/usr/bin/env node
 
 import { createHash, createDecipheriv } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 
 const SITE = "https://artificialanalysis.ai";
 const INDEX_HASH = "artificial-analysis-intelligence-index";
 const SCORE_DISPLAY_OFFSET = 0.5;
 const SIZE_CLASSES = new Set(["tiny", "small", "medium", "large", "unknown"]);
+const LONG_OPTION_NAMES = new Map([
+  ["-t", "--top"],
+  ["-f", "--filter"],
+  ["-l", "--lab"],
+  ["-m", "--model"],
+  ["-o", "--open"],
+  ["-c", "--closed"],
+  ["-n", "--min"],
+  ["-x", "--max"],
+  ["-b", "--before"],
+  ["-a", "--after"],
+  ["-s", "--size"],
+  ["-j", "--json"],
+  ["-u", "--url"],
+]);
+const VALUE_OPTIONS = new Set([
+  "--top",
+  "--filter",
+  "--min",
+  "--max",
+  "--before",
+  "--after",
+  "--size",
+  "--url",
+]);
+const CANONICAL_OPTION_ORDER = new Map([
+  ["--url", 0],
+  ["--filter", 1],
+  ["--before", 2],
+  ["--after", 3],
+  ["--size", 4],
+  ["--open", 5],
+  ["--closed", 6],
+  ["--min", 7],
+  ["--max", 8],
+  ["--model", 9],
+  ["--lab", 10],
+  ["--top", 11],
+  ["--json", 12],
+]);
 
 function printUsage() {
-  console.log(`Usage:
+  console.log(`alg - Artificial Analysis Link Generator
+
+Usage:
   node alg.mjs [options]
 
 Options:
@@ -31,6 +75,7 @@ Options:
                          matching. No spaces are allowed in the size string.
                          Some, but not all, closed-source models have a
                          known AA size class.
+  -j, --json             Write selected models to a timestamped JSON file.
   -u, --url <url>        Preserve the models from an existing Artificial Analysis URL.
   -h, --help             Show this help.
 
@@ -41,7 +86,15 @@ applied only to that set.
 With neither --open nor --closed, both weight classes are included. Supplying both
 includes both classes explicitly. Without --lab or --model, no grouping is applied.
 --lab and --model are alternative grouping modes; supplying both is redundant and
-has the same result as --lab.`);
+has the same result as --lab.
+
+With --json, the URL is still printed to stdout. The JSON file path and merge
+warnings are printed to stderr. The filename uses a compact local timestamp
+and canonical execution-order flag segments; --json is omitted and the --url
+value is omitted from the filename but retained in the JSON arguments metadata.
+The JSON arguments use full long-form flag names and separate value entries.
+The export also records the current Intelligence Index version and its source
+changelog entry.`);
 }
 
 function isObject(value) {
@@ -168,7 +221,7 @@ async function decryptManifest(reference) {
   return JSON.parse(gunzipSync(compressed).toString("utf8"));
 }
 
-async function findScoreModels(payloads) {
+async function findScoreManifest(payloads) {
   const references = findManifestReferences(payloads);
   const failures = [];
 
@@ -185,7 +238,7 @@ async function findScoreModels(payloads) {
             Object.hasOwn(model, "intelligenceIndex"),
         )
       ) {
-        return data.models;
+        return data;
       }
     } catch (error) {
       failures.push(`${reference.path}: ${error.message}`);
@@ -194,6 +247,29 @@ async function findScoreModels(payloads) {
 
   const detail = failures.length ? `\n${failures.join("\n")}` : "";
   throw new Error(`Could not find the Artificial Analysis score manifest.${detail}`);
+}
+
+function findIntelligenceIndexMetadata(scoreManifest) {
+  const changelogEntries = Array.isArray(scoreManifest.changelog)
+    ? scoreManifest.changelog
+    : [];
+  const changelogEntry = changelogEntries.find(
+    (entry) =>
+      isObject(entry) &&
+      entry.type === "methodologyUpdated" &&
+      typeof entry.title === "string",
+  );
+  const version = changelogEntry?.title.match(/\bv\d+(?:\.\d+)+\b/i)?.[0];
+  if (!changelogEntry || !version) {
+    throw new Error(
+      "Could not determine the Intelligence Index version from the score manifest changelog.",
+    );
+  }
+
+  return {
+    version,
+    changelog: { ...changelogEntry },
+  };
 }
 
 function parseTop(value) {
@@ -277,6 +353,7 @@ function parseArguments(args) {
     beforeDate: null,
     afterDate: null,
     sizeClasses: null,
+    json: false,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -371,6 +448,8 @@ function parseArguments(args) {
       index += 1;
     } else if (arg.startsWith("--size=")) {
       options.sizeClasses = parseSizeClasses(arg.slice("--size=".length), "--size");
+    } else if (arg === "-j" || arg === "--json") {
+      options.json = true;
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -569,6 +648,247 @@ function sortByScore(slugs, scoresBySlug) {
   });
 }
 
+function isPlainObject(value) {
+  return isObject(value) && !Array.isArray(value);
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function formatDiagnosticValue(value) {
+  const serialized = stableStringify(value);
+  return serialized.length > 200 ? `${serialized.slice(0, 197)}...` : serialized;
+}
+
+function mergeModelValues(catalogValue, manifestValue, path, warnings) {
+  if (isPlainObject(catalogValue) && isPlainObject(manifestValue)) {
+    const merged = {};
+    const keys = new Set([
+      ...Object.keys(catalogValue),
+      ...Object.keys(manifestValue),
+    ]);
+
+    for (const key of keys) {
+      const catalogHasKey = Object.hasOwn(catalogValue, key);
+      const manifestHasKey = Object.hasOwn(manifestValue, key);
+      const valuePath = path ? `${path}.${key}` : key;
+
+      if (catalogHasKey && manifestHasKey) {
+        merged[key] = mergeModelValues(
+          catalogValue[key],
+          manifestValue[key],
+          valuePath,
+          warnings,
+        );
+      } else if (manifestHasKey) {
+        merged[key] = manifestValue[key];
+      } else {
+        merged[key] = catalogValue[key];
+      }
+    }
+    return merged;
+  }
+
+  if (stableStringify(catalogValue) !== stableStringify(manifestValue)) {
+    warnings.push({
+      path,
+      catalogValue,
+      manifestValue,
+    });
+  }
+  return manifestValue;
+}
+
+function mergeSelectedModels(selected, catalogBySlug, scoresBySlug) {
+  const warnings = [];
+  const models = selected.map((slug) => {
+    const catalogModel = catalogBySlug.get(slug);
+    const manifestModel = scoresBySlug.get(slug);
+    if (!catalogModel || !manifestModel) {
+      throw new Error(
+        `Could not export model ${slug}: it is missing from the ${!catalogModel ? "catalog" : "manifest"}.`,
+      );
+    }
+
+    return mergeModelValues(
+      catalogModel,
+      manifestModel,
+      `models[${slug}]`,
+      warnings,
+    );
+  });
+  return { models, warnings };
+}
+
+function formatLocalTimestamp(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join("-") +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function formatFilenameTimestamp(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join("") +
+    `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function sanitizeFilenamePart(value) {
+  return value.replace(/[^A-Za-z0-9._=,+@-]+/g, "_");
+}
+
+function getCanonicalArguments(args) {
+  const entries = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const rawArg = args[index];
+    const equalsIndex = rawArg.indexOf("=");
+    const rawName = equalsIndex === -1 ? rawArg : rawArg.slice(0, equalsIndex);
+    const optionName = LONG_OPTION_NAMES.get(rawName) ?? rawName;
+    const inlineValue = equalsIndex === -1 ? null : rawArg.slice(equalsIndex + 1);
+    const endIndex =
+      inlineValue === null && VALUE_OPTIONS.has(optionName) ? index + 1 : index;
+
+    entries.push({
+      index,
+      optionName,
+      args: VALUE_OPTIONS.has(optionName)
+        ? [optionName, inlineValue ?? args[index + 1]]
+        : [optionName],
+    });
+    index = endIndex;
+  }
+
+  entries.sort(
+    (left, right) =>
+      (CANONICAL_OPTION_ORDER.get(left.optionName) ?? Number.MAX_SAFE_INTEGER) -
+        (CANONICAL_OPTION_ORDER.get(right.optionName) ?? Number.MAX_SAFE_INTEGER) ||
+      left.index - right.index,
+  );
+  return entries.flatMap((entry) => entry.args);
+}
+
+function getFilenameArguments(args) {
+  const filenameArgs = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const rawArg = args[index];
+    const equalsIndex = rawArg.indexOf("=");
+    const rawName = equalsIndex === -1 ? rawArg : rawArg.slice(0, equalsIndex);
+    const optionName = LONG_OPTION_NAMES.get(rawName) ?? rawName;
+    const inlineValue =
+      equalsIndex === -1 ? null : rawArg.slice(equalsIndex + 1);
+
+    if (optionName === "--json") {
+      continue;
+    }
+    if (optionName === "--url") {
+      filenameArgs.push("--url");
+      if (inlineValue === null) {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (inlineValue !== null) {
+      filenameArgs.push(`--${optionName.slice(2)}-${sanitizeFilenamePart(inlineValue)}`);
+    } else if (VALUE_OPTIONS.has(optionName)) {
+      const value = args[index + 1];
+      filenameArgs.push(`--${optionName.slice(2)}-${sanitizeFilenamePart(value)}`);
+      index += 1;
+    } else {
+      filenameArgs.push(optionName);
+    }
+  }
+  return filenameArgs;
+}
+
+function buildJsonFilename(timestamp, args) {
+  const filenameArgs = getFilenameArguments(args);
+  return `alg-${timestamp}${filenameArgs.join("")}.json`;
+}
+
+function formatArgumentsBlock(argumentsList) {
+  if (argumentsList.length === 0) {
+    return '  "arguments": []';
+  }
+
+  const lines = ['  "arguments": ['];
+  const entries = [];
+  for (let index = 0; index < argumentsList.length; index += 1) {
+    const argument = argumentsList[index];
+    const values = [JSON.stringify(argument)];
+    if (VALUE_OPTIONS.has(argument) && index + 1 < argumentsList.length) {
+      values.push(JSON.stringify(argumentsList[index + 1]));
+      index += 1;
+    }
+    entries.push(`    ${values.join(", ")}`);
+  }
+  lines.push(entries.join(",\n"));
+  lines.push("  ]");
+  return lines.join("\n");
+}
+
+function stringifyJsonExport(payload) {
+  const serialized = JSON.stringify(payload, null, 2);
+  const defaultArgumentsBlock = JSON.stringify(payload.arguments, null, 2)
+    .split("\n")
+    .map((line, index) =>
+      index === 0 ? `  "arguments": ${line}` : `  ${line}`,
+    )
+    .join("\n");
+  const formattedArgumentsBlock = formatArgumentsBlock(payload.arguments);
+  if (!serialized.includes(defaultArgumentsBlock)) {
+    throw new Error("Could not format the JSON arguments metadata.");
+  }
+  return serialized.replace(defaultArgumentsBlock, formattedArgumentsBlock);
+}
+
+async function writeJsonExport(
+  selected,
+  catalogBySlug,
+  scoresBySlug,
+  scoreManifest,
+  args,
+) {
+  const generatedAtDate = new Date();
+  const generatedAt = formatLocalTimestamp(generatedAtDate);
+  const canonicalArgs = getCanonicalArguments(args);
+  const { models, warnings } = mergeSelectedModels(
+    selected,
+    catalogBySlug,
+    scoresBySlug,
+  );
+  const intelligenceIndex = findIntelligenceIndexMetadata(scoreManifest);
+  const filePath = join(
+    process.cwd(),
+    buildJsonFilename(formatFilenameTimestamp(generatedAtDate), canonicalArgs),
+  );
+  const payload = {
+    generatedAt,
+    arguments: canonicalArgs,
+    intelligenceIndex,
+    models,
+  };
+  await writeFile(filePath, `${stringifyJsonExport(payload)}\n`, "utf8");
+  return { filePath, warnings };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes("--help") || args.includes("-h")) {
@@ -585,7 +905,8 @@ async function main() {
 
   const payloads = extractFlightPayloads(await page.text());
   const catalog = findModelCatalog(payloads);
-  const scoreModels = await findScoreModels(payloads);
+  const scoreManifest = await findScoreManifest(payloads);
+  const scoreModels = scoreManifest.models;
   const requestedSlugs = inputUrl
     ? [...new Set((inputUrl.searchParams.get("models") ?? "").split(",").filter(Boolean))]
     : catalog.map((model) => model.slug);
@@ -642,10 +963,29 @@ async function main() {
   output.searchParams.set("models", selected.join(","));
   output.hash = INDEX_HASH;
 
+  const jsonExport = options.json
+    ? await writeJsonExport(
+        selected,
+        catalogBySlug,
+        scoresBySlug,
+        scoreManifest,
+        args,
+      )
+    : null;
   const unscored = selected.filter(
     (slug) => !Number.isFinite(scoresBySlug.get(slug)?.intelligenceIndex),
   );
   console.log(output.toString());
+  if (jsonExport) {
+    console.error(`Wrote JSON export to ${jsonExport.filePath}.`);
+    for (const warning of jsonExport.warnings) {
+      console.error(
+        `Warning: ${warning.path} differs between the catalog and manifest; ` +
+          `using the manifest value. Catalog=${formatDiagnosticValue(warning.catalogValue)}; ` +
+          `manifest=${formatDiagnosticValue(warning.manifestValue)}.`,
+      );
+    }
+  }
   console.error(`Kept ${selected.length} of ${requestedSlugs.length} requested models.`);
   if (nameFiltered.length < requestedSlugs.length) {
     console.error(
