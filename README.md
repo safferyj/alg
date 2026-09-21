@@ -43,23 +43,25 @@ models were retained and which filters reduced the set.
 
 ```text
 -t, --top <n>          Return the top n entries by Intelligence Index score.
--f, --filter <string>  Keep only models whose names contain a filter string.
+-f, --filter <string>  Include only models whose names contain a filter string.
                        Separate alternatives with comma (",") for OR
                        matching. No spaces are allowed in the filter string.
--l, --lab              Keep only the best entry from each lab.
--m, --model            Keep only the best entry from each model.
+-l, --lab              Include only the best entry from each lab.
+-m, --model            Include only the best entry from each model.
 -o, --open             Include open-weight models.
 -c, --closed           Include closed-weight models.
 -n, --min <n>          Include entries with a score at least n (adjusted by -0.5).
 -x, --max <n>          Include entries with a score at most n (adjusted by -0.5).
 -b, --before <date>    Include models released before YYYY-MM-DD (exclusive).
 -a, --after <date>     Include models released on or after YYYY-MM-DD.
--s, --size <string>    Keep only models in the specified AA size classes:
+-s, --size <string>    Include only models in the specified AA size classes:
                        tiny, small, medium, large, unknown.
                        Separate alternatives with comma (",") for OR
                        matching. No spaces are allowed in the size string.
                        Some, but not all, closed-source models have a
                        known AA size class.
+-d, --deprecated       Include only models marked as deprecated.
+-r, --current          Include only models not marked as deprecated.
 -j, --json             Write selected models to a timestamped JSON file.
 -u, --url <url>        Use the models from an existing Artificial Analysis URL.
 ```
@@ -114,6 +116,17 @@ named classes as well as in `unknown`:
 node alg.mjs --size large,medium
 ```
 
+With neither `--deprecated` nor `--current`, no deprecation-status filtering
+is applied. Supplying both includes both statuses explicitly. `--deprecated`
+includes only models where `deprecated` is `true`; `--current` includes only
+models where it is `false`. Here, current means that Artificial Analysis has
+not marked the model as deprecated; it does not necessarily guarantee ongoing
+vendor support:
+
+```bash
+node alg.mjs --current --top 10
+```
+
 `--json` writes a merged JSON export in the current working directory while
 continuing to print the Artificial Analysis URL to standard output. The
 generated file path and any merge warnings are printed to standard error. The
@@ -155,8 +168,9 @@ error. The filename uses the compact local timestamp format
 complete invocation flags and values, including a full `--url` value, are
 retained in `arguments` metadata. The filename segments and `arguments` array
 use this canonical execution order:
-`--url`, `--filter`, `--before`, `--after`, `--size`, `--open`, `--closed`,
-`--min`, `--max`, `--model`, `--lab`, `--top`, `--json`. Every argument uses
+`--url`, `--filter`, `--before`, `--after`, `--size`, `--deprecated`,
+`--current`, `--open`, `--closed`, `--min`, `--max`, `--model`, `--lab`,
+`--top`, `--json`. Every argument uses
 the full flag name, and value-taking flags are represented as separate
 flag/value entries. For readability, each flag/value pair is formatted on one
 line in the file; the parsed JSON remains the same flat argument array.
@@ -169,13 +183,13 @@ filters are then applied only to models from that link; models outside it are
 not added.
 
 ```bash
-# Keep only the best variant for each model in the existing link
+# Include only the best variant for each model in the existing link
 node alg.mjs --url "https://artificialanalysis.ai/?models=..." --model
 
 # Get the top 10 entries from the existing link
 node alg.mjs --url "https://artificialanalysis.ai/?models=..." --top 10
 
-# Keep only open-weight entries from the existing link
+# Include only open-weight entries from the existing link
 node alg.mjs --url "https://artificialanalysis.ai/?models=..." --open
 ```
 
@@ -183,8 +197,8 @@ node alg.mjs --url "https://artificialanalysis.ai/?models=..." --open
 
 1. Fetches the current Artificial Analysis model catalog and Intelligence Index
    scores.
-2. Applies the requested release-date, size-class, open/closed weight-class, and
-   score-range filters.
+2. Applies the requested release-date, size-class, deprecated/current,
+   open/closed weight-class, and score-range filters.
 3. If requested, groups models by release family with `--model` or by lab with
    `--lab`, keeping the entry with the highest numeric Intelligence Index score
    in each group.

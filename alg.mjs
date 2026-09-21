@@ -21,6 +21,8 @@ const LONG_OPTION_NAMES = new Map([
   ["-b", "--before"],
   ["-a", "--after"],
   ["-s", "--size"],
+  ["-d", "--deprecated"],
+  ["-r", "--current"],
   ["-j", "--json"],
   ["-u", "--url"],
 ]);
@@ -40,14 +42,16 @@ const CANONICAL_OPTION_ORDER = new Map([
   ["--before", 2],
   ["--after", 3],
   ["--size", 4],
-  ["--open", 5],
-  ["--closed", 6],
-  ["--min", 7],
-  ["--max", 8],
-  ["--model", 9],
-  ["--lab", 10],
-  ["--top", 11],
-  ["--json", 12],
+  ["--deprecated", 5],
+  ["--current", 6],
+  ["--open", 7],
+  ["--closed", 8],
+  ["--min", 9],
+  ["--max", 10],
+  ["--model", 11],
+  ["--lab", 12],
+  ["--top", 13],
+  ["--json", 14],
 ]);
 
 function printUsage() {
@@ -58,23 +62,25 @@ Usage:
 
 Options:
   -t, --top <n>          Return the top n entries by Intelligence Index score.
-  -f, --filter <string>  Keep only models whose names contain a filter string.
+  -f, --filter <string>  Include only models whose names contain a filter string.
                          Separate alternatives with comma (",") for OR
                          matching. No spaces are allowed in the filter string.
-  -l, --lab              Keep only the best entry from each lab.
-  -m, --model            Keep only the best entry from each model.
+  -l, --lab              Include only the best entry from each lab.
+  -m, --model            Include only the best entry from each model.
   -o, --open             Include open-weight models.
   -c, --closed           Include closed-weight models.
   -n, --min <n>          Include entries with a score at least n (adjusted by -0.5).
   -x, --max <n>          Include entries with a score at most n (adjusted by -0.5).
   -b, --before <date>    Include models released before YYYY-MM-DD (exclusive).
   -a, --after <date>     Include models released on or after YYYY-MM-DD.
-  -s, --size <string>    Keep only models in the specified AA size classes:
+  -s, --size <string>    Include only models in the specified AA size classes:
                          tiny, small, medium, large, unknown.
                          Separate alternatives with comma (",") for OR
                          matching. No spaces are allowed in the size string.
                          Some, but not all, closed-source models have a
                          known AA size class.
+  -d, --deprecated       Include only models marked as deprecated.
+  -r, --current          Include only models not marked as deprecated.
   -j, --json             Write selected models to a timestamped JSON file.
   -u, --url <url>        Preserve the models from an existing Artificial Analysis URL.
   -h, --help             Show this help.
@@ -87,6 +93,11 @@ With neither --open nor --closed, both weight classes are included. Supplying bo
 includes both classes explicitly. Without --lab or --model, no grouping is applied.
 --lab and --model are alternative grouping modes; supplying both is redundant and
 has the same result as --lab.
+
+With neither --deprecated nor --current, no deprecation-status filtering is
+applied. Supplying both includes both statuses explicitly. --current means
+that Artificial Analysis has not marked a model as deprecated; it does not
+necessarily guarantee ongoing vendor support.
 
 With --json, the URL is still printed to stdout. The JSON file path and merge
 warnings are printed to stderr. The filename uses a compact local timestamp
@@ -353,6 +364,8 @@ function parseArguments(args) {
     beforeDate: null,
     afterDate: null,
     sizeClasses: null,
+    deprecated: false,
+    current: false,
     json: false,
   };
 
@@ -448,6 +461,10 @@ function parseArguments(args) {
       index += 1;
     } else if (arg.startsWith("--size=")) {
       options.sizeClasses = parseSizeClasses(arg.slice("--size=".length), "--size");
+    } else if (arg === "-d" || arg === "--deprecated") {
+      options.deprecated = true;
+    } else if (arg === "-r" || arg === "--current") {
+      options.current = true;
     } else if (arg === "-j" || arg === "--json") {
       options.json = true;
     } else {
@@ -614,6 +631,31 @@ function filterBySize(requestedSlugs, scoresBySlug, options) {
       typeof sizeClass === "string" ? sizeClass.toLowerCase() : "unknown";
     return options.sizeClasses.has(normalizedSizeClass);
   });
+}
+
+function filterByDeprecatedStatus(requestedSlugs, catalogBySlug, options) {
+  if (options.deprecated === options.current) {
+    return requestedSlugs;
+  }
+
+  const wantedDeprecated = options.deprecated;
+  const unclassified = [];
+  const selected = requestedSlugs.filter((slug) => {
+    const deprecated = catalogBySlug.get(slug)?.deprecated;
+    if (typeof deprecated !== "boolean") {
+      unclassified.push(slug);
+      return false;
+    }
+    return deprecated === wantedDeprecated;
+  });
+
+  if (unclassified.length) {
+    throw new Error(
+      `Could not determine the deprecation status for ${unclassified.length} requested model(s): ${unclassified.join(", ")}`,
+    );
+  }
+
+  return selected;
 }
 
 function filterByScore(requestedSlugs, scoresBySlug, options) {
@@ -932,7 +974,22 @@ async function main() {
     throw new Error("No models remain after applying the size-class filter.");
   }
 
-  const weightFiltered = filterByWeight(sizeFiltered, scoresBySlug, options);
+  const deprecatedFiltered = filterByDeprecatedStatus(
+    sizeFiltered,
+    catalogBySlug,
+    options,
+  );
+  if (deprecatedFiltered.length === 0) {
+    throw new Error(
+      "No models remain after applying the deprecation-status filter.",
+    );
+  }
+
+  const weightFiltered = filterByWeight(
+    deprecatedFiltered,
+    scoresBySlug,
+    options,
+  );
   if (weightFiltered.length === 0) {
     throw new Error("No models remain after applying the weight-class filter.");
   }
@@ -1002,9 +1059,14 @@ async function main() {
       `Excluded ${dateFiltered.length - sizeFiltered.length} models by size class.`,
     );
   }
-  if (weightFiltered.length < sizeFiltered.length) {
+  if (deprecatedFiltered.length < sizeFiltered.length) {
     console.error(
-      `Excluded ${sizeFiltered.length - weightFiltered.length} models by weight class.`,
+      `Excluded ${sizeFiltered.length - deprecatedFiltered.length} models by deprecation status.`,
+    );
+  }
+  if (weightFiltered.length < deprecatedFiltered.length) {
+    console.error(
+      `Excluded ${deprecatedFiltered.length - weightFiltered.length} models by weight class.`,
     );
   }
   if (scoreFiltered.length < weightFiltered.length) {
