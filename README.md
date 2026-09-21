@@ -8,6 +8,7 @@ filters. It can also export the selected models as merged JSON data.
 
 - Node.js 18 or newer
 - Internet access
+- Network requests time out after 30 seconds.
 
 No npm packages are required.
 
@@ -64,6 +65,7 @@ models were retained and which filters reduced the set.
 -r, --current          Include only models not marked as deprecated.
 -j, --json             Write selected models to a timestamped JSON file.
 -u, --url <url>        Use the models from an existing Artificial Analysis URL.
+-h, --help             Show this help.
 ```
 
 Without `--url`, all models in the current Artificial Analysis catalog are used.
@@ -120,8 +122,7 @@ With neither `--deprecated` nor `--current`, no deprecation-status filtering
 is applied. Supplying both includes both statuses explicitly. `--deprecated`
 includes only models where `deprecated` is `true`; `--current` includes only
 models where it is `false`. Here, current means that Artificial Analysis has
-not marked the model as deprecated; it does not necessarily guarantee ongoing
-vendor support:
+not marked the model as deprecated:
 
 ```bash
 node alg.mjs --current --top 10
@@ -174,6 +175,8 @@ use this canonical execution order:
 the full flag name, and value-taking flags are represented as separate
 flag/value entries. For readability, each flag/value pair is formatted on one
 line in the file; the parsed JSON remains the same flat argument array.
+If the generated filename already exists, a numeric suffix such as `-1` or `-2`
+is added instead of overwriting the existing export.
 
 ## Filter an existing model set
 
@@ -210,5 +213,6 @@ node alg.mjs --url "https://artificialanalysis.ai/?models=..." --open
 
 If a grouping is requested and a group has no numeric score, the first catalog
 entry is retained.
+
 If an input URL refers to a model no longer in the current catalog, the script
 stops and reports the missing model instead of silently changing the set.

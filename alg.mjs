@@ -8,6 +8,7 @@ import { gunzipSync } from "node:zlib";
 const SITE = "https://artificialanalysis.ai";
 const INDEX_HASH = "artificial-analysis-intelligence-index";
 const SCORE_DISPLAY_OFFSET = 0.5;
+const REQUEST_TIMEOUT_MS = 30_000;
 const SIZE_CLASSES = new Set(["tiny", "small", "medium", "large", "unknown"]);
 const LONG_OPTION_NAMES = new Map([
   ["-t", "--top"],
@@ -82,7 +83,7 @@ Options:
   -d, --deprecated       Include only models marked as deprecated.
   -r, --current          Include only models not marked as deprecated.
   -j, --json             Write selected models to a timestamped JSON file.
-  -u, --url <url>        Preserve the models from an existing Artificial Analysis URL.
+  -u, --url <url>        Use the models from an existing Artificial Analysis URL.
   -h, --help             Show this help.
 
 Without --url, all models in the current Artificial Analysis catalog are used.
@@ -96,8 +97,7 @@ has the same result as --lab.
 
 With neither --deprecated nor --current, no deprecation-status filtering is
 applied. Supplying both includes both statuses explicitly. --current means
-that Artificial Analysis has not marked a model as deprecated; it does not
-necessarily guarantee ongoing vendor support.
+that Artificial Analysis has not marked a model as deprecated.
 
 With --json, the URL is still printed to stdout. The JSON file path and merge
 warnings are printed to stderr. The filename uses a compact local timestamp
@@ -105,7 +105,9 @@ and canonical execution-order flag segments; --json is omitted and the --url
 value is omitted from the filename but retained in the JSON arguments metadata.
 The JSON arguments use full long-form flag names and separate value entries.
 The export also records the current Intelligence Index version and its source
-changelog entry.`);
+changelog entry.
+
+Additional information is available in the README.`);
 }
 
 function isObject(value) {
@@ -127,6 +129,24 @@ function walk(value, visitor) {
 
   for (const child of Object.values(value)) {
     walk(child, visitor);
+  }
+}
+
+async function fetchWithTimeout(url, label, readResponse) {
+  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal });
+    return await readResponse(response);
+  } catch (error) {
+    if (signal.aborted) {
+      throw new Error(
+        `${label} request timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds.`,
+        { cause: error },
+      );
+    }
+
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label} request failed: ${detail}`, { cause: error });
   }
 }
 
@@ -213,12 +233,17 @@ function findManifestReferences(payloads) {
 async function decryptManifest(reference) {
   const key = Buffer.from(reference.key, "hex");
   const nonce = createHash("sha256").update(key).digest().subarray(0, 12);
-  const response = await fetch(`${SITE}${reference.path}`);
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
-  }
+  const ciphertext = await fetchWithTimeout(
+    `${SITE}${reference.path}`,
+    "Score manifest",
+    async (response) => {
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+      return Buffer.from(await response.arrayBuffer());
+    },
+  );
 
-  const ciphertext = Buffer.from(await response.arrayBuffer());
   if (ciphertext.length <= 16) {
     throw new Error("Manifest payload is too short.");
   }
@@ -264,12 +289,15 @@ function findIntelligenceIndexMetadata(scoreManifest) {
   const changelogEntries = Array.isArray(scoreManifest.changelog)
     ? scoreManifest.changelog
     : [];
-  const changelogEntry = changelogEntries.find(
-    (entry) =>
-      isObject(entry) &&
-      entry.type === "methodologyUpdated" &&
-      typeof entry.title === "string",
-  );
+  const changelogEntry = [...changelogEntries]
+    .filter(
+      (entry) =>
+        isObject(entry) &&
+        entry.type === "methodologyUpdated" &&
+        typeof entry.title === "string" &&
+        isValidIsoDate(entry.dateLa),
+    )
+    .sort((left, right) => right.dateLa.localeCompare(left.dateLa))[0];
   const version = changelogEntry?.title.match(/\bv\d+(?:\.\d+)+\b/i)?.[0];
   if (!changelogEntry || !version) {
     throw new Error(
@@ -917,9 +945,9 @@ async function writeJsonExport(
     scoresBySlug,
   );
   const intelligenceIndex = findIntelligenceIndexMetadata(scoreManifest);
-  const filePath = join(
-    process.cwd(),
-    buildJsonFilename(formatFilenameTimestamp(generatedAtDate), canonicalArgs),
+  const baseFilename = buildJsonFilename(
+    formatFilenameTimestamp(generatedAtDate),
+    canonicalArgs,
   );
   const payload = {
     generatedAt,
@@ -927,7 +955,28 @@ async function writeJsonExport(
     intelligenceIndex,
     models,
   };
-  await writeFile(filePath, `${stringifyJsonExport(payload)}\n`, "utf8");
+  const serialized = `${stringifyJsonExport(payload)}\n`;
+  let suffix = 0;
+  let filePath;
+  while (true) {
+    const filename =
+      suffix === 0
+        ? baseFilename
+        : baseFilename.replace(/\.json$/, `-${suffix}.json`);
+    filePath = join(process.cwd(), filename);
+    try {
+      await writeFile(filePath, serialized, {
+        encoding: "utf8",
+        flag: "wx",
+      });
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST") {
+        throw error;
+      }
+      suffix += 1;
+    }
+  }
   return { filePath, warnings };
 }
 
@@ -940,12 +989,20 @@ async function main() {
 
   const options = parseArguments(args);
   const inputUrl = options.inputUrl;
-  const page = await fetch(`${SITE}/`);
-  if (!page.ok) {
-    throw new Error(`Failed to fetch the Artificial Analysis catalog: ${page.status}`);
-  }
+  const html = await fetchWithTimeout(
+    `${SITE}/`,
+    "Artificial Analysis catalog",
+    async (response) => {
+      if (!response.ok) {
+        throw new Error(
+          `Failed to fetch the Artificial Analysis catalog: ${response.status}`,
+        );
+      }
+      return response.text();
+    },
+  );
 
-  const payloads = extractFlightPayloads(await page.text());
+  const payloads = extractFlightPayloads(html);
   const catalog = findModelCatalog(payloads);
   const scoreManifest = await findScoreManifest(payloads);
   const scoreModels = scoreManifest.models;
