@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 
 const SITE = "https://artificialanalysis.ai";
-const INDEX_HASH = "artificial-analysis-intelligence-index";
+const INDEX_HASH = "intelligence";
 const SCORE_DISPLAY_OFFSET = 0.5;
 const REQUEST_TIMEOUT_MS = 30_000;
 const SIZE_CLASSES = new Set(["tiny", "small", "medium", "large", "unknown"]);
@@ -25,6 +25,7 @@ const LONG_OPTION_NAMES = new Map([
   ["-d", "--deprecated"],
   ["-r", "--current"],
   ["-j", "--json"],
+  ["-2", "--two"],
   ["-u", "--url"],
 ]);
 const VALUE_OPTIONS = new Set([
@@ -53,6 +54,7 @@ const CANONICAL_OPTION_ORDER = new Map([
   ["--lab", 12],
   ["--top", 13],
   ["--json", 14],
+  ["--two", 15],
 ]);
 
 function printUsage() {
@@ -83,6 +85,8 @@ Options:
   -d, --deprecated       Include only models marked as deprecated.
   -r, --current          Include only models not marked as deprecated.
   -j, --json             Write selected models to a timestamped JSON file.
+  -2, --two              Print two URLs, both the main entry page URL and
+                         additionally the Models page URL.
   -u, --url <url>        Use the models from an existing Artificial Analysis URL.
   -h, --help             Show this help.
 
@@ -106,6 +110,9 @@ value is omitted from the filename but retained in the JSON arguments metadata.
 The JSON arguments use full long-form flag names and separate value entries.
 The export also records the current Intelligence Index version and its source
 changelog entry.
+
+With --two, the main entry page URL is followed by a blank line and a Models
+page URL containing the same selected models.
 
 Additional information is available in the README.`);
 }
@@ -395,6 +402,7 @@ function parseArguments(args) {
     deprecated: false,
     current: false,
     json: false,
+    two: false,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -495,6 +503,8 @@ function parseArguments(args) {
       options.current = true;
     } else if (arg === "-j" || arg === "--json") {
       options.json = true;
+    } else if (arg === "-2" || arg === "--two") {
+      options.two = true;
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -864,7 +874,7 @@ function getFilenameArguments(args) {
     const inlineValue =
       equalsIndex === -1 ? null : rawArg.slice(equalsIndex + 1);
 
-    if (optionName === "--json") {
+    if (optionName === "--json" || optionName === "--two") {
       continue;
     }
     if (optionName === "--url") {
@@ -1076,6 +1086,9 @@ async function main() {
   const output = new URL(`${SITE}/`);
   output.searchParams.set("models", selected.join(","));
   output.hash = INDEX_HASH;
+  const modelsOutput = new URL(`${SITE}/models`);
+  modelsOutput.searchParams.set("models", selected.join(","));
+  modelsOutput.hash = INDEX_HASH;
 
   const jsonExport = options.json
     ? await writeJsonExport(
@@ -1090,6 +1103,11 @@ async function main() {
     (slug) => !Number.isFinite(scoresBySlug.get(slug)?.intelligenceIndex),
   );
   console.log(output.toString());
+  if (options.two) {
+    console.log();
+    console.log(modelsOutput.toString());
+    console.log();
+  }
   if (jsonExport) {
     console.error(`Wrote JSON export to ${jsonExport.filePath}.`);
     for (const warning of jsonExport.warnings) {

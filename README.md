@@ -64,6 +64,8 @@ models were retained and which filters reduced the set.
 -d, --deprecated       Include only models marked as deprecated.
 -r, --current          Include only models not marked as deprecated.
 -j, --json             Write selected models to a timestamped JSON file.
+-2, --two              Print two URLs, both the main entry page URL and
+                       additionally the Models page URL.
 -u, --url <url>        Use the models from an existing Artificial Analysis URL.
 -h, --help             Show this help.
 ```
@@ -165,18 +167,30 @@ fields; catalog-only fields such as `effort` are added. If a shared value ever
 differs, the manifest value is retained and a warning is written to standard
 error. The filename uses the compact local timestamp format
 `YYYYMMDD-HHmmss`, followed by long-form flag segments such as
-`--lab--top-10`. The `--json` flag is omitted, as is the `--url` value. The
-complete invocation flags and values, including a full `--url` value, are
-retained in `arguments` metadata. The filename segments and `arguments` array
-use this canonical execution order:
+`--lab--top-10`. The `--json` and `--two` flags are omitted, as is the `--url`
+value. The complete invocation flags and values, including a full `--url`
+value, are retained in `arguments` metadata. The filename segments and
+`arguments` array use this canonical execution order:
 `--url`, `--filter`, `--before`, `--after`, `--size`, `--deprecated`,
 `--current`, `--open`, `--closed`, `--min`, `--max`, `--model`, `--lab`,
-`--top`, `--json`. Every argument uses
+`--top`, `--json`, `--two`. Every argument uses
 the full flag name, and value-taking flags are represented as separate
 flag/value entries. For readability, each flag/value pair is formatted on one
 line in the file; the parsed JSON remains the same flat argument array.
 If the generated filename already exists, a numeric suffix such as `-1` or `-2`
 is added instead of overwriting the existing export.
+
+`--two` prints the main entry page URL, followed by a blank line and a Models
+page URL containing the same selected models. The two pages have some sections
+in common, but they also have differences in their page-specific sections and
+presentation:
+
+```text
+https://artificialanalysis.ai/?models=...#intelligence
+
+https://artificialanalysis.ai/models?models=...#intelligence
+
+```
 
 ## Filter an existing model set
 
