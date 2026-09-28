@@ -21,11 +21,11 @@ npm test
 ```
 
 These tests use checked-in synthetic Artificial Analysis payloads and do not
-need network access. The live smoke test is separate because the catalog and
-page schema can change:
+need network access. The live smoke test is separate because it makes a network
+request and the catalog and page schema can change:
 
 ```bash
-ALG_LIVE_TESTS=1 npm run test:live
+npm run test:live
 ```
 
 The live test checks only stable invariants such as successful catalog
