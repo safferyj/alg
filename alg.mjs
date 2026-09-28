@@ -12,22 +12,25 @@ const SCORE_DISPLAY_HALF_RANGE = 0.5;
 const REQUEST_TIMEOUT_MS = 30_000;
 const SIZE_CLASSES = new Set(["tiny", "small", "medium", "large", "unknown"]);
 const LONG_OPTION_NAMES = new Map([
-  ["-t", "--top"],
-  ["-f", "--filter"],
-  ["-l", "--lab"],
-  ["-m", "--model"],
   ["-o", "--open"],
   ["-c", "--closed"],
-  ["-n", "--min"],
-  ["-x", "--max"],
+  ["-g", "--reasoning"],
+  ["-i", "--instruct"],
+  ["-r", "--current"],
+  ["-d", "--deprecated"],
   ["-b", "--before"],
   ["-a", "--after"],
+  ["-n", "--min"],
+  ["-x", "--max"],
   ["-s", "--size"],
-  ["-d", "--deprecated"],
-  ["-r", "--current"],
-  ["-j", "--json"],
-  ["-2", "--two"],
+  ["-f", "--filter"],
+  ["-m", "--model"],
+  ["-l", "--lab"],
+  ["-t", "--top"],
   ["-u", "--url"],
+  ["-2", "--two"],
+  ["-j", "--json"],
+  ["-h", "--help"],
 ]);
 const VALUE_OPTIONS = new Set([
   "--top",
@@ -40,22 +43,25 @@ const VALUE_OPTIONS = new Set([
   "--url",
 ]);
 const CANONICAL_OPTION_ORDER = new Map([
-  ["--url", 0],
-  ["--filter", 1],
-  ["--before", 2],
-  ["--after", 3],
-  ["--size", 4],
+  ["--open", 0],
+  ["--closed", 1],
+  ["--reasoning", 2],
+  ["--instruct", 3],
+  ["--current", 4],
   ["--deprecated", 5],
-  ["--current", 6],
-  ["--open", 7],
-  ["--closed", 8],
-  ["--min", 9],
-  ["--max", 10],
-  ["--model", 11],
-  ["--lab", 12],
-  ["--top", 13],
-  ["--json", 14],
-  ["--two", 15],
+  ["--before", 6],
+  ["--after", 7],
+  ["--min", 8],
+  ["--max", 9],
+  ["--size", 10],
+  ["--filter", 11],
+  ["--model", 12],
+  ["--lab", 13],
+  ["--top", 14],
+  ["--url", 15],
+  ["--two", 16],
+  ["--json", 17],
+  ["--help", 18],
 ]);
 
 function printUsage(output = console.log) {
@@ -65,55 +71,64 @@ Usage:
   node alg.mjs [options]
 
 Options:
-  -t, --top <n>          Return the top n entries by Intelligence Index score.
-  -f, --filter <string>  Include only models whose names contain a filter string.
-                         Separate alternatives with comma (",") for OR
-                         matching. No spaces are allowed in the filter string.
-  -l, --lab              Include only the best entry from each lab.
-  -m, --model            Include only the best entry from each model.
   -o, --open             Include open-weight models.
   -c, --closed           Include closed-weight models.
-  -n, --min <n>          Include entries with a displayed score at least n.
-  -x, --max <n>          Include entries with a displayed score at most n.
+  -g, --reasoning        Include reasoning models.
+  -i, --instruct         Include non-reasoning (instruct) models.
+  -r, --current          Include only models not marked as deprecated.
+  -d, --deprecated       Include only models marked as deprecated.
   -b, --before <date>    Include models released before YYYY-MM-DD (exclusive).
   -a, --after <date>     Include models released on or after YYYY-MM-DD.
+  -n, --min <n>          Include entries with a displayed score at least n.
+  -x, --max <n>          Include entries with a displayed score at most n.
   -s, --size <string>    Include only models in the specified AA size classes:
                          tiny, small, medium, large, unknown.
                          Separate alternatives with comma (",") for OR
                          matching. No spaces are allowed in the size string.
                          Some, but not all, closed-source models have a
                          known AA size class.
-  -d, --deprecated       Include only models marked as deprecated.
-  -r, --current          Include only models not marked as deprecated.
-  -j, --json             Write selected models to a timestamped JSON file.
+  -f, --filter <string>  Include only models whose names contain a filter string.
+                         Separate alternatives with comma (",") for OR
+                         matching. No spaces are allowed in the filter string.
+  -m, --model            Include only the best entry from each model.
+  -l, --lab              Include only the best entry from each lab.
+  -t, --top <n>          Return the top n entries by Intelligence Index score.
+  -u, --url <url>        Use the models from an existing Artificial Analysis URL.
   -2, --two              Print two URLs, both the main entry page URL and
                          additionally the Models page URL.
-  -u, --url <url>        Use the models from an existing Artificial Analysis URL.
+  -j, --json             Write selected models to a timestamped JSON file.
   -h, --help             Show this help.
+
+If neither --open nor --closed is specified, both weight classes are included.
+Supplying both includes both classes explicitly.
+
+If neither --reasoning nor --instruct is specified, both model response styles
+are included. Supplying both includes both styles explicitly. --reasoning selects
+reasoning models; --instruct selects non-reasoning models.
+
+If neither --current nor --deprecated is specified, no deprecation-status
+filtering is applied. Supplying both includes both statuses explicitly. --current
+means that Artificial Analysis has not marked a model as deprecated.
+
+Without --model or --lab, no grouping is applied. --model and --lab are
+alternative grouping modes; supplying both is redundant and has the same result
+as --lab.
 
 Without --url, all models in the current Artificial Analysis catalog are used.
 With --url, the existing model set is preserved and all other filters are
 applied only to that set.
 
-With neither --open nor --closed, both weight classes are included. Supplying both
-includes both classes explicitly. Without --lab or --model, no grouping is applied.
---lab and --model are alternative grouping modes; supplying both is redundant and
-has the same result as --lab.
+With --two, the main entry page URL is followed by a blank line and a Models
+page URL containing the same selected models.
 
-With neither --deprecated nor --current, no deprecation-status filtering is
-applied. Supplying both includes both statuses explicitly. --current means
-that Artificial Analysis has not marked a model as deprecated.
-
-With --json, the URL is still printed to stdout. The JSON file path and merge
-warnings are printed to stderr. The filename uses a compact local timestamp
+When --json is used, the resulting Artificial Analysis URL or URLs are still
+printed to standard output. The JSON file path and any merge warnings are
+printed to standard error. The filename uses a compact local timestamp
 and canonical execution-order flag segments; --json is omitted and the --url
 value is omitted from the filename but retained in the JSON arguments metadata.
 The JSON arguments use full long-form flag names and separate value entries.
 The export also records the current Intelligence Index version and its source
 changelog entry.
-
-With --two, the main entry page URL is followed by a blank line and a Models
-page URL containing the same selected models.
 
 Additional information is available in the README.`);
 }
@@ -508,6 +523,8 @@ function parseArguments(args) {
     sizeClasses: null,
     deprecated: false,
     current: false,
+    instruct: false,
+    reasoning: false,
     json: false,
     two: false,
   };
@@ -608,6 +625,10 @@ function parseArguments(args) {
       options.deprecated = true;
     } else if (arg === "-r" || arg === "--current") {
       options.current = true;
+    } else if (arg === "-i" || arg === "--instruct") {
+      options.instruct = true;
+    } else if (arg === "-g" || arg === "--reasoning") {
+      options.reasoning = true;
     } else if (arg === "-j" || arg === "--json") {
       options.json = true;
     } else if (arg === "-2" || arg === "--two") {
@@ -723,6 +744,31 @@ function filterByWeight(requestedSlugs, scoresBySlug, options) {
   if (unclassified.length) {
     throw new Error(
       `Could not determine the weight class for ${unclassified.length} requested model(s): ${unclassified.join(", ")}`,
+    );
+  }
+
+  return selected;
+}
+
+function filterByReasoning(requestedSlugs, scoresBySlug, options) {
+  if (options.instruct === options.reasoning) {
+    return requestedSlugs;
+  }
+
+  const wantedReasoning = options.reasoning;
+  const unclassified = [];
+  const selected = requestedSlugs.filter((slug) => {
+    const isReasoning = scoresBySlug.get(slug)?.isReasoning;
+    if (typeof isReasoning !== "boolean") {
+      unclassified.push(slug);
+      return false;
+    }
+    return isReasoning === wantedReasoning;
+  });
+
+  if (unclassified.length) {
+    throw new Error(
+      `Could not determine the reasoning status for ${unclassified.length} requested model(s): ${unclassified.join(", ")}`,
     );
   }
 
@@ -1201,7 +1247,22 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
     throw new Error("No models remain after applying the weight-class filter.");
   }
 
-  const scoreFiltered = filterByScore(weightFiltered, scoresBySlug, options);
+  const reasoningFiltered = filterByReasoning(
+    weightFiltered,
+    scoresBySlug,
+    options,
+  );
+  if (reasoningFiltered.length === 0) {
+    throw new Error(
+      "No models remain after applying the instruct/reasoning filter.",
+    );
+  }
+
+  const scoreFiltered = filterByScore(
+    reasoningFiltered,
+    scoresBySlug,
+    options,
+  );
   if (scoreFiltered.length === 0) {
     throw new Error("No models remain after applying the score range filter.");
   }
@@ -1287,9 +1348,14 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
       `Excluded ${deprecatedFiltered.length - weightFiltered.length} models by weight class.`,
     );
   }
-  if (scoreFiltered.length < weightFiltered.length) {
+  if (reasoningFiltered.length < weightFiltered.length) {
     stderr(
-      `Excluded ${weightFiltered.length - scoreFiltered.length} models by score range.`,
+      `Excluded ${weightFiltered.length - reasoningFiltered.length} models by instruct/reasoning class.`,
+    );
+  }
+  if (scoreFiltered.length < reasoningFiltered.length) {
+    stderr(
+      `Excluded ${reasoningFiltered.length - scoreFiltered.length} models by score range.`,
     );
   }
   if (groupedCount < scoreFiltered.length) {
@@ -1330,6 +1396,7 @@ export {
   filterByDeprecatedStatus,
   filterByName,
   filterByReleaseDate,
+  filterByReasoning,
   filterByScore,
   filterBySize,
   filterByWeight,

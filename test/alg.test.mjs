@@ -10,6 +10,7 @@ import {
   filterByDeprecatedStatus,
   filterByName,
   filterByReleaseDate,
+  filterByReasoning,
   filterByScore,
   filterBySize,
   filterByWeight,
@@ -139,6 +140,10 @@ test("parses aliases, inline values, and canonical argument order", () => {
     "Large,medium",
     "-o",
     "-c",
+    "-g",
+    "-i",
+    "-r",
+    "-d",
     "-a",
     "2025-01-01",
     "-b",
@@ -155,46 +160,60 @@ test("parses aliases, inline values, and canonical argument order", () => {
   assert.equal(options.maxScore, 50);
   assert.equal(options.model, true);
   assert.equal(options.lab, true);
+  assert.equal(options.instruct, true);
+  assert.equal(options.reasoning, true);
   assert.equal(options.json, true);
   assert.equal(options.two, true);
   assert.equal(options.inputUrl.searchParams.get("models"), "one,two");
   assert.deepEqual(getCanonicalArguments(args), [
-    "--url",
-    "https://artificialanalysis.ai/?models=one,two",
-    "--filter",
-    "Qwen,Claude",
+    "--open",
+    "--closed",
+    "--reasoning",
+    "--instruct",
+    "--current",
+    "--deprecated",
     "--before",
     "2026-01-01",
     "--after",
     "2025-01-01",
-    "--size",
-    "Large,medium",
-    "--open",
-    "--closed",
     "--min",
     "50",
     "--max",
     "50",
+    "--size",
+    "Large,medium",
+    "--filter",
+    "Qwen,Claude",
     "--model",
     "--lab",
     "--top",
     "10",
-    "--json",
+    "--url",
+    "https://artificialanalysis.ai/?models=one,two",
     "--two",
+    "--json",
   ]);
   assert.deepEqual(getFilenameArguments(getCanonicalArguments(args)), [
-    "--url",
-    "--filter-Qwen,Claude",
-    "--before-2026-01-01",
-    "--after-2025-01-01",
-    "--size-Large,medium",
     "--open",
     "--closed",
+    "--reasoning",
+    "--instruct",
+    "--current",
+    "--deprecated",
+    "--before-2026-01-01",
+    "--after-2025-01-01",
     "--min-50",
     "--max-50",
+    "--size-Large,medium",
+    "--filter-Qwen,Claude",
     "--model",
     "--lab",
     "--top-10",
+    "--url",
+  ]);
+  assert.deepEqual(getCanonicalArguments(["--json", "-h"]), [
+    "--json",
+    "--help",
   ]);
 });
 
@@ -363,6 +382,37 @@ test("supports flat and nested release metadata in status filters", () => {
       parseArguments(["--open"]),
     ),
     ["flat", "nested"],
+  );
+});
+
+test("filters instruct and reasoning models from the manifest classification", () => {
+  const slugs = ["current-alpha", "current-beta", "current-gamma"];
+  const scores = scoresBySlug(scoreManifest.models);
+
+  assert.deepEqual(
+    filterByReasoning(slugs, scores, parseArguments(["--instruct"])),
+    ["current-alpha"],
+  );
+  assert.deepEqual(
+    filterByReasoning(slugs, scores, parseArguments(["--reasoning"])),
+    ["current-beta", "current-gamma"],
+  );
+  assert.deepEqual(
+    filterByReasoning(
+      slugs,
+      scores,
+      parseArguments(["--instruct", "--reasoning"]),
+    ),
+    slugs,
+  );
+  assert.throws(
+    () =>
+      filterByReasoning(
+        ["unknown"],
+        scores,
+        parseArguments(["--reasoning"]),
+      ),
+    /Could not determine the reasoning status/,
   );
 });
 
@@ -553,8 +603,8 @@ test("runs the full deterministic CLI path with injected network and file adapte
     "50",
     "--max",
     "50",
-    "--json",
     "--two",
+    "--json",
   ]);
   assert.match(stderr.join("\n"), /Wrote JSON export/);
   assert.match(stderr.join("\n"), /Kept 3 of 100 requested models/);
@@ -569,4 +619,70 @@ test("keeps the executable help path working in a child process", () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /alg - Artificial Analysis Link Generator/);
   assert.equal(result.stderr, "");
+  const optionNames = result.stdout
+    .split("\n")
+    .filter((line) => /^\s+-\S+,\s+--\S+/.test(line))
+    .map((line) => line.match(/^\s+-\S+,\s+(--\S+)/)[1]);
+  assert.deepEqual(optionNames, [
+    "--open",
+    "--closed",
+    "--reasoning",
+    "--instruct",
+    "--current",
+    "--deprecated",
+    "--before",
+    "--after",
+    "--min",
+    "--max",
+    "--size",
+    "--filter",
+    "--model",
+    "--lab",
+    "--top",
+    "--url",
+    "--two",
+    "--json",
+    "--help",
+  ]);
+});
+
+test("keeps help and README explanations in canonical option order", async () => {
+  const result = spawnSync(process.execPath, ["alg.mjs", "--help"], {
+    cwd: new URL("..", import.meta.url),
+    encoding: "utf8",
+  });
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+
+  const assertInOrder = (text, markers) => {
+    let offset = 0;
+    for (const marker of markers) {
+      const index = text.indexOf(marker, offset);
+      assert.notEqual(index, -1, `Missing explanation marker: ${marker}`);
+      offset = index + marker.length;
+    }
+  };
+
+  assertInOrder(result.stdout, [
+    "If neither --open nor --closed is specified",
+    "If neither --reasoning nor --instruct is specified",
+    "If neither --current nor --deprecated is specified",
+    "Without --model or --lab, no grouping is applied",
+    "Without --url, all models in the current Artificial Analysis catalog are used",
+    "With --two, the main entry page URL is followed",
+    "When --json is used, the resulting Artificial Analysis URL or URLs are still",
+  ]);
+
+  assertInOrder(readme, [
+    "If neither `--open` nor `--closed` is specified",
+    "If neither `--reasoning` nor `--instruct` is specified",
+    "If neither `--current` nor `--deprecated` is specified",
+    "`--before` is an exclusive release-date filter",
+    "`--min` and `--max` are inclusive against AA's rounded display score",
+    "`--size` is case-insensitive",
+    "`--filter` is a case-insensitive substring filter",
+    "Without `--model` or `--lab`, no grouping is applied",
+    "Without `--url`, all models in the current Artificial Analysis catalog are used",
+    "`--two` prints the main entry page URL",
+    "`--json` writes a merged JSON export",
+  ]);
 });

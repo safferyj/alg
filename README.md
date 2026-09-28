@@ -12,26 +12,10 @@ filters. It can also export the selected models as merged JSON data.
 
 No npm packages are required.
 
-## Testing
-
-Run the deterministic unit, fixture, and CLI integration tests with:
-
-```bash
-npm test
+```text
+Usage:
+  node alg.mjs [options]
 ```
-
-These tests use checked-in synthetic Artificial Analysis payloads and do not
-need network access. The live smoke test is separate because it makes a network
-request and the catalog and page schema can change:
-
-```bash
-npm run test:live
-```
-
-The live test checks only stable invariants such as successful catalog
-discovery, a non-empty result, and a valid Artificial Analysis URL. GitHub
-Actions runs the deterministic suite on Node.js 18 and 22; it does not depend
-on Artificial Analysis availability.
 
 ## Linux: invoke as `alg`
 
@@ -64,52 +48,63 @@ models were retained and which filters reduced the set.
 ## Options
 
 ```text
--t, --top <n>          Return the top n entries by Intelligence Index score.
--f, --filter <string>  Include only models whose names contain a filter string.
-                       Separate alternatives with comma (",") for OR
-                       matching. No spaces are allowed in the filter string.
--l, --lab              Include only the best entry from each lab.
--m, --model            Include only the best entry from each model.
 -o, --open             Include open-weight models.
 -c, --closed           Include closed-weight models.
--n, --min <n>          Include entries with a displayed score at least n.
--x, --max <n>          Include entries with a displayed score at most n.
+-g, --reasoning        Include reasoning models.
+-i, --instruct         Include non-reasoning (instruct) models.
+-r, --current          Include only models not marked as deprecated.
+-d, --deprecated       Include only models marked as deprecated.
 -b, --before <date>    Include models released before YYYY-MM-DD (exclusive).
 -a, --after <date>     Include models released on or after YYYY-MM-DD.
+-n, --min <n>          Include entries with a displayed score at least n.
+-x, --max <n>          Include entries with a displayed score at most n.
 -s, --size <string>    Include only models in the specified AA size classes:
                        tiny, small, medium, large, unknown.
                        Separate alternatives with comma (",") for OR
                        matching. No spaces are allowed in the size string.
                        Some, but not all, closed-source models have a
                        known AA size class.
--d, --deprecated       Include only models marked as deprecated.
--r, --current          Include only models not marked as deprecated.
--j, --json             Write selected models to a timestamped JSON file.
+-f, --filter <string>  Include only models whose names contain a filter string.
+                       Separate alternatives with comma (",") for OR
+                       matching. No spaces are allowed in the filter string.
+-m, --model            Include only the best entry from each model.
+-l, --lab              Include only the best entry from each lab.
+-t, --top <n>          Return the top n entries by Intelligence Index score.
+-u, --url <url>        Use the models from an existing Artificial Analysis URL.
 -2, --two              Print two URLs, both the main entry page URL and
                        additionally the Models page URL.
--u, --url <url>        Use the models from an existing Artificial Analysis URL.
+-j, --json             Write selected models to a timestamped JSON file.
 -h, --help             Show this help.
 ```
 
-Without `--url`, all models in the current Artificial Analysis catalog are used.
-With `--url`, the existing model set is preserved and all other filters are
-applied only to that set.
+If neither `--open` nor `--closed` is specified, both weight classes are
+included. Supplying both includes both classes explicitly.
 
-`--filter` is a case-insensitive substring filter on model names. Separate
-multiple alternatives with comma (`,`) to match any of them. **Do not include
-spaces in the filter string.** For example:
+If neither `--reasoning` nor `--instruct` is specified, both model response
+styles are included. Supplying both includes both styles explicitly. `--reasoning`
+includes only reasoning models, while `--instruct` includes only non-reasoning
+models.
+These flags use Artificial Analysis's `isReasoning` score-manifest field; if that
+field is unavailable for a requested model, the command stops with an error
+rather than guessing.
+
+If neither `--current` nor `--deprecated` is specified, no deprecation-status
+filtering is applied. Supplying both includes both statuses explicitly.
+`--current` includes only models where `deprecated` is `false`; `--deprecated`
+includes only models where it is `true`. Here, current means that Artificial
+Analysis has not marked the model as deprecated:
 
 ```bash
-node alg.mjs --filter qwen3.8,qwen3.6
+node alg.mjs --current --top 10
 ```
 
-The filter can be combined with every other option, including `--url`.
+`--before` is an exclusive release-date filter and `--after` is inclusive. Both
+require a valid ISO calendar date in `YYYY-MM-DD` format. They can be combined
+to define a release-date range:
 
-Without `--open` or `--closed`, both weight classes are included. Supplying both
-includes both classes explicitly. Without `--lab` or `--model`, no grouping is
-applied and the full requested model list is retained. `--lab` and `--model` are
-alternative grouping modes; supplying both is redundant and has the same result
-as `--lab`.
+```bash
+node alg.mjs --after 2025-01-01 --before 2026-01-01
+```
 
 `--min` and `--max` are inclusive against AA's rounded display score. To align
 the raw decimal Intelligence Index score with that display, `--min n` uses a
@@ -124,14 +119,6 @@ node alg.mjs --min 40 --max 50 --model --top 10
 
 Entries without a numeric score are excluded when either threshold is supplied.
 
-`--before` is an exclusive release-date filter and `--after` is inclusive. Both
-require a valid ISO calendar date in `YYYY-MM-DD` format. They can be combined
-to define a release-date range:
-
-```bash
-node alg.mjs --after 2025-01-01 --before 2026-01-01
-```
-
 `--size` is case-insensitive. Separate multiple alternatives with comma (`,`) to
 match any of them. **Do not include spaces in the size string.** Accepted values
 are `tiny`, `small`, `medium`, `large`, and `unknown`. `unknown` includes models
@@ -143,21 +130,55 @@ named classes as well as in `unknown`:
 node alg.mjs --size large,medium
 ```
 
-With neither `--deprecated` nor `--current`, no deprecation-status filtering
-is applied. Supplying both includes both statuses explicitly. `--deprecated`
-includes only models where `deprecated` is `true`; `--current` includes only
-models where it is `false`. Here, current means that Artificial Analysis has
-not marked the model as deprecated:
+`--filter` is a case-insensitive substring filter on model names. Separate
+multiple alternatives with comma (`,`) to match any of them. **Do not include
+spaces in the filter string.** For example:
 
 ```bash
-node alg.mjs --current --top 10
+node alg.mjs --filter qwen3.8,qwen3.6
 ```
 
-`--json` writes a merged JSON export in the current working directory while
-continuing to print the Artificial Analysis URL to standard output. The
-generated file path and any merge warnings are printed to standard error. The
-export contains the final selected models, in descending Intelligence Index
-order:
+The filter can be combined with every other option, including `--url`.
+
+Without `--model` or `--lab`, no grouping is applied and the full requested model
+list is retained. `--model` and `--lab` are alternative grouping modes; supplying
+both is redundant and has the same result as `--lab`.
+
+Without `--url`, all models in the current Artificial Analysis catalog are used.
+
+Use `--url` when an existing `alg` generated Artificial Analysis link should act
+as a fixed allowlist. Without additional filters, its model set is preserved.
+Other filters are then applied only to models from that link; models outside it
+are not added:
+
+```bash
+# Include only the best variant for each model in the existing link
+node alg.mjs --url "https://artificialanalysis.ai/?models=..." --model
+
+# Get the top 10 entries from the existing link
+node alg.mjs --url "https://artificialanalysis.ai/?models=..." --top 10
+
+# Include only open-weight entries from the existing link
+node alg.mjs --url "https://artificialanalysis.ai/?models=..." --open
+```
+
+`--two` prints the main entry page URL, followed by a blank line and a Models
+page URL containing the same selected models. The two pages have some sections
+in common, but they also have differences in their page-specific sections and
+presentation:
+
+```text
+https://artificialanalysis.ai/?models=...#intelligence
+
+https://artificialanalysis.ai/models?models=...#intelligence
+
+```
+
+`--json` writes a merged JSON export in the current working directory. When
+`--json` is used, the resulting Artificial Analysis URL or URLs are still
+printed to standard output. The JSON file path and any merge warnings are
+printed to standard error. The export contains the final selected models, in
+descending Intelligence Index order:
 
 ```json
 {
@@ -195,51 +216,22 @@ error. The filename uses the compact local timestamp format
 value. The complete invocation flags and values, including a full `--url`
 value, are retained in `arguments` metadata. The filename segments and
 `arguments` array use this canonical execution order:
-`--url`, `--filter`, `--before`, `--after`, `--size`, `--deprecated`,
-`--current`, `--open`, `--closed`, `--min`, `--max`, `--model`, `--lab`,
-`--top`, `--json`, `--two`. Every argument uses
+`--open`, `--closed`, `--reasoning`, `--instruct`, `--current`, `--deprecated`,
+`--before`, `--after`, `--min`, `--max`, `--size`, `--filter`, `--model`,
+`--lab`, `--top`, `--url`, `--two`, `--json`, `--help`. Every argument uses
 the full flag name, and value-taking flags are represented as separate
 flag/value entries. For readability, each flag/value pair is formatted on one
 line in the file; the parsed JSON remains the same flat argument array.
 If the generated filename already exists, a numeric suffix such as `-1` or `-2`
 is added instead of overwriting the existing export.
 
-`--two` prints the main entry page URL, followed by a blank line and a Models
-page URL containing the same selected models. The two pages have some sections
-in common, but they also have differences in their page-specific sections and
-presentation:
-
-```text
-https://artificialanalysis.ai/?models=...#intelligence
-
-https://artificialanalysis.ai/models?models=...#intelligence
-
-```
-
-## Filter an existing model set
-
-Use `--url` when an existing Artificial Analysis link should act as a
-fixed allowlist. Without additional filters, its model set is preserved. Other
-filters are then applied only to models from that link; models outside it are
-not added.
-
-```bash
-# Include only the best variant for each model in the existing link
-node alg.mjs --url "https://artificialanalysis.ai/?models=..." --model
-
-# Get the top 10 entries from the existing link
-node alg.mjs --url "https://artificialanalysis.ai/?models=..." --top 10
-
-# Include only open-weight entries from the existing link
-node alg.mjs --url "https://artificialanalysis.ai/?models=..." --open
-```
-
 ## How it works
 
 1. Fetches the current Artificial Analysis model catalog and Intelligence Index
    scores.
 2. Applies the requested release-date, size-class, deprecated/current,
-   open/closed weight-class, and score-range filters.
+   open/closed weight-class, instruct/reasoning response-style, and score-range
+   filters.
 3. If requested, groups models by release family with `--model` or by lab with
    `--lab`, keeping the entry with the highest numeric Intelligence Index score
    in each group.
@@ -254,3 +246,24 @@ entry is retained.
 
 If an input URL refers to a model no longer in the current catalog, the script
 stops and reports the missing model instead of silently changing the set.
+
+## Testing
+
+Run the deterministic unit, fixture, and CLI integration tests with:
+
+```bash
+npm test
+```
+
+These tests use checked-in synthetic Artificial Analysis payloads and do not
+need network access. The live smoke test is separate because it makes a network
+request and the catalog and page schema can change:
+
+```bash
+npm run test:live
+```
+
+The live test checks only stable invariants such as successful catalog
+discovery, a non-empty result, and a valid Artificial Analysis URL. GitHub
+Actions runs the deterministic suite on Node.js 18 and 22; it does not depend
+on Artificial Analysis availability.
