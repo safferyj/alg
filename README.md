@@ -51,8 +51,8 @@ models were retained and which filters reduced the set.
 -m, --model            Include only the best entry from each model.
 -o, --open             Include open-weight models.
 -c, --closed           Include closed-weight models.
--n, --min <n>          Include entries with a score at least n (adjusted by -0.5).
--x, --max <n>          Include entries with a score at most n (adjusted by -0.5).
+-n, --min <n>          Include entries with a displayed score at least n.
+-x, --max <n>          Include entries with a displayed score at most n.
 -b, --before <date>    Include models released before YYYY-MM-DD (exclusive).
 -a, --after <date>     Include models released on or after YYYY-MM-DD.
 -s, --size <string>    Include only models in the specified AA size classes:
@@ -90,10 +90,12 @@ applied and the full requested model list is retained. `--lab` and `--model` are
 alternative grouping modes; supplying both is redundant and has the same result
 as `--lab`.
 
-`--min` and `--max` are inclusive. Each user-supplied threshold is reduced by
-`0.5` before it is compared with the raw decimal Intelligence Index score, to
-align filtering with AA's rounded display. For example, `--min 40 --max 50`
-uses raw thresholds of `39.5` and `49.5`. The flags can be combined:
+`--min` and `--max` are inclusive against AA's rounded display score. To align
+the raw decimal Intelligence Index score with that display, `--min n` uses a
+raw lower bound of `n - 0.5`, while `--max n` uses an exclusive raw upper bound
+of `n + 0.5`. For example, `--min 40 --max 50` includes raw scores from
+`39.5` (inclusive) up to `50.5` (exclusive). Therefore, `--min 50 --max 50`
+selects all models whose displayed score is 50. The flags can be combined:
 
 ```bash
 node alg.mjs --min 40 --max 50 --model --top 10
@@ -158,8 +160,9 @@ order:
 
 The `intelligenceIndex.version` value is extracted from the latest
 `methodologyUpdated` entry in the downloaded score manifest rather than being
-hard-coded. The matching source changelog entry is retained under
-`intelligenceIndex.changelog`.
+hard-coded. If the manifest does not include a methodology entry, the current
+Artificial Analysis page metadata is used instead. The source or derived
+metadata is retained under `intelligenceIndex.changelog`.
 
 Each exported model is joined by slug from the catalog and manifest. Shared
 fields appear only once. The manifest supplies shared values and richer nested

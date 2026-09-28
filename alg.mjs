@@ -7,7 +7,7 @@ import { gunzipSync } from "node:zlib";
 
 const SITE = "https://artificialanalysis.ai";
 const INDEX_HASH = "intelligence";
-const SCORE_DISPLAY_OFFSET = 0.5;
+const SCORE_DISPLAY_HALF_RANGE = 0.5;
 const REQUEST_TIMEOUT_MS = 30_000;
 const SIZE_CLASSES = new Set(["tiny", "small", "medium", "large", "unknown"]);
 const LONG_OPTION_NAMES = new Map([
@@ -72,8 +72,8 @@ Options:
   -m, --model            Include only the best entry from each model.
   -o, --open             Include open-weight models.
   -c, --closed           Include closed-weight models.
-  -n, --min <n>          Include entries with a score at least n (adjusted by -0.5).
-  -x, --max <n>          Include entries with a score at most n (adjusted by -0.5).
+  -n, --min <n>          Include entries with a displayed score at least n.
+  -x, --max <n>          Include entries with a displayed score at most n.
   -b, --before <date>    Include models released before YYYY-MM-DD (exclusive).
   -a, --after <date>     Include models released on or after YYYY-MM-DD.
   -s, --size <string>    Include only models in the specified AA size classes:
@@ -169,11 +169,33 @@ function findModelCatalog(payloads) {
         (model) =>
           isObject(model) &&
           typeof model.slug === "string" &&
-          isObject(model.release) &&
-          typeof model.release.slug === "string",
+          ((isObject(model.release) && typeof model.release.slug === "string") ||
+            typeof model.releaseSlug === "string"),
       );
       if (modelEntries.length >= value.models.length * 0.8) {
-        catalog = value.models;
+        const releasesBySlug = new Map(
+          Array.isArray(value.releases)
+            ? value.releases
+                .filter(
+                  (release) =>
+                    isObject(release) && typeof release.slug === "string",
+                )
+                .map((release) => [release.slug, release])
+            : [],
+        );
+        catalog = value.models.map((model) => {
+          if (
+            isObject(model) &&
+            !isObject(model.release) &&
+            typeof model.releaseSlug === "string"
+          ) {
+            const release = releasesBySlug.get(model.releaseSlug);
+            if (release) {
+              return { ...model, release };
+            }
+          }
+          return model;
+        });
       }
     });
     if (catalog) {
@@ -292,7 +314,66 @@ async function findScoreManifest(payloads) {
   throw new Error(`Could not find the Artificial Analysis score manifest.${detail}`);
 }
 
-function findIntelligenceIndexMetadata(scoreManifest) {
+function findPageIntelligenceIndexMetadata(payloads, html) {
+  const strings = [];
+  const versions = new Set();
+  let articleUrl = null;
+
+  for (const payload of payloads) {
+    walk(payload.value, (value) => {
+      for (const child of Object.values(value)) {
+        if (typeof child !== "string") {
+          continue;
+        }
+        strings.push(child);
+      }
+    });
+  }
+
+  strings.push(html);
+  for (const value of strings) {
+    for (const match of value.matchAll(
+      /\bIntelligence Index (v\d+(?:\.\d+)+)\b/gi,
+    )) {
+      versions.add(match[1]);
+    }
+
+    const articleMatch = value.match(
+      /\/articles\/artificial-analysis-intelligence-index-(v\d+(?:-\d+)+)/i,
+    );
+    if (articleMatch) {
+      articleUrl = `/articles/artificial-analysis-intelligence-index-${articleMatch[1]}`;
+    }
+  }
+
+  const version = [...versions].sort((left, right) => {
+    const leftParts = left.slice(1).split(".").map(Number);
+    const rightParts = right.slice(1).split(".").map(Number);
+    const length = Math.max(leftParts.length, rightParts.length);
+    for (let index = 0; index < length; index += 1) {
+      const difference = (rightParts[index] ?? 0) - (leftParts[index] ?? 0);
+      if (difference !== 0) {
+        return difference;
+      }
+    }
+    return 0;
+  })[0];
+
+  if (!version) {
+    return null;
+  }
+
+  return {
+    version,
+    changelog: {
+      type: "methodologyUpdated",
+      title: `Artificial Analysis Intelligence Index ${version}`,
+      url: articleUrl ?? "/methodology/intelligence-benchmarking",
+    },
+  };
+}
+
+function findIntelligenceIndexMetadata(scoreManifest, payloads, html) {
   const changelogEntries = Array.isArray(scoreManifest.changelog)
     ? scoreManifest.changelog
     : [];
@@ -306,16 +387,23 @@ function findIntelligenceIndexMetadata(scoreManifest) {
     )
     .sort((left, right) => right.dateLa.localeCompare(left.dateLa))[0];
   const version = changelogEntry?.title.match(/\bv\d+(?:\.\d+)+\b/i)?.[0];
-  if (!changelogEntry || !version) {
-    throw new Error(
-      "Could not determine the Intelligence Index version from the score manifest changelog.",
-    );
+  if (changelogEntry && version) {
+    return {
+      version,
+      changelog: { ...changelogEntry },
+    };
   }
 
-  return {
-    version,
-    changelog: { ...changelogEntry },
-  };
+  const pageMetadata = findPageIntelligenceIndexMetadata(payloads, html);
+  if (pageMetadata) {
+    return pageMetadata;
+  }
+
+  if (!changelogEntry || !version) {
+    throw new Error(
+      "Could not determine the Intelligence Index version from the score manifest or page metadata.",
+    );
+  }
 }
 
 function parseTop(value) {
@@ -455,21 +543,21 @@ function parseArguments(args) {
       if (!value || value.startsWith("--")) {
         throw new Error("--min requires a finite number.");
       }
-      options.minScore = parseScore(value, "--min") - SCORE_DISPLAY_OFFSET;
+      options.minScore = parseScore(value, "--min");
       index += 1;
     } else if (arg.startsWith("--min=")) {
       options.minScore =
-        parseScore(arg.slice("--min=".length), "--min") - SCORE_DISPLAY_OFFSET;
+        parseScore(arg.slice("--min=".length), "--min");
     } else if (arg === "-x" || arg === "--max") {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) {
         throw new Error("--max requires a finite number.");
       }
-      options.maxScore = parseScore(value, "--max") - SCORE_DISPLAY_OFFSET;
+      options.maxScore = parseScore(value, "--max");
       index += 1;
     } else if (arg.startsWith("--max=")) {
       options.maxScore =
-        parseScore(arg.slice("--max=".length), "--max") - SCORE_DISPLAY_OFFSET;
+        parseScore(arg.slice("--max=".length), "--max");
     } else if (arg === "-b" || arg === "--before") {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) {
@@ -577,7 +665,7 @@ function selectHighestScoringVariants(requestedSlugs, catalogBySlug, scoresBySlu
     requestedSlugs,
     catalogBySlug,
     scoresBySlug,
-    (model) => model.release?.slug ?? model.slug,
+    (model) => model.release?.slug ?? model.releaseSlug ?? model.slug,
   );
 }
 
@@ -647,7 +735,8 @@ function filterByReleaseDate(requestedSlugs, catalogBySlug, options) {
   }
 
   return requestedSlugs.filter((slug) => {
-    const releaseDate = catalogBySlug.get(slug)?.releaseDate;
+    const model = catalogBySlug.get(slug);
+    const releaseDate = model?.releaseDate ?? model?.release?.releaseDate;
     if (!isValidIsoDate(releaseDate)) {
       return false;
     }
@@ -679,7 +768,8 @@ function filterByDeprecatedStatus(requestedSlugs, catalogBySlug, options) {
   const wantedDeprecated = options.deprecated;
   const unclassified = [];
   const selected = requestedSlugs.filter((slug) => {
-    const deprecated = catalogBySlug.get(slug)?.deprecated;
+    const model = catalogBySlug.get(slug);
+    const deprecated = model?.deprecated ?? model?.release?.deprecated;
     if (typeof deprecated !== "boolean") {
       unclassified.push(slug);
       return false;
@@ -701,14 +791,23 @@ function filterByScore(requestedSlugs, scoresBySlug, options) {
     return requestedSlugs;
   }
 
+  const minRawScore =
+    options.minScore === null
+      ? null
+      : options.minScore - SCORE_DISPLAY_HALF_RANGE;
+  const maxRawScoreExclusive =
+    options.maxScore === null
+      ? null
+      : options.maxScore + SCORE_DISPLAY_HALF_RANGE;
+
   return requestedSlugs.filter((slug) => {
     const score = scoresBySlug.get(slug)?.intelligenceIndex;
     if (!Number.isFinite(score)) {
       return false;
     }
     return (
-      (options.minScore === null || score >= options.minScore) &&
-      (options.maxScore === null || score <= options.maxScore)
+      (minRawScore === null || score >= minRawScore) &&
+      (maxRawScoreExclusive === null || score < maxRawScoreExclusive)
     );
   });
 }
@@ -944,6 +1043,8 @@ async function writeJsonExport(
   catalogBySlug,
   scoresBySlug,
   scoreManifest,
+  payloads,
+  html,
   args,
 ) {
   const generatedAtDate = new Date();
@@ -954,7 +1055,11 @@ async function writeJsonExport(
     catalogBySlug,
     scoresBySlug,
   );
-  const intelligenceIndex = findIntelligenceIndexMetadata(scoreManifest);
+  const intelligenceIndex = findIntelligenceIndexMetadata(
+    scoreManifest,
+    payloads,
+    html,
+  );
   const baseFilename = buildJsonFilename(
     formatFilenameTimestamp(generatedAtDate),
     canonicalArgs,
@@ -1096,6 +1201,8 @@ async function main() {
         catalogBySlug,
         scoresBySlug,
         scoreManifest,
+        payloads,
+        html,
         args,
       )
     : null;
