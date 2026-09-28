@@ -1,0 +1,40 @@
+{
+  "models": [
+    {
+      "slug": "legacy-alpha",
+      "name": "Legacy Alpha",
+      "release": {
+        "slug": "legacy-alpha-release",
+        "releaseDate": "2024-01-15",
+        "deprecated": false
+      },
+      "creator": {
+        "slug": "lab-a"
+      }
+    },
+    {
+      "slug": "legacy-beta",
+      "name": "Legacy Beta",
+      "release": {
+        "slug": "legacy-beta-release",
+        "releaseDate": "2023-06-01",
+        "deprecated": true
+      },
+      "creator": {
+        "slug": "lab-b"
+      }
+    },
+    {
+      "slug": "legacy-gamma",
+      "name": "Legacy Gamma",
+      "release": {
+        "slug": "legacy-gamma-release",
+        "releaseDate": "2025-03-20",
+        "deprecated": false
+      },
+      "creator": {
+        "slug": "lab-a"
+      }
+    }
+  ]
+}

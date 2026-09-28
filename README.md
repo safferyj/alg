@@ -12,6 +12,27 @@ filters. It can also export the selected models as merged JSON data.
 
 No npm packages are required.
 
+## Testing
+
+Run the deterministic unit, fixture, and CLI integration tests with:
+
+```bash
+npm test
+```
+
+These tests use checked-in synthetic Artificial Analysis payloads and do not
+need network access. The live smoke test is separate because the catalog and
+page schema can change:
+
+```bash
+ALG_LIVE_TESTS=1 npm run test:live
+```
+
+The live test checks only stable invariants such as successful catalog
+discovery, a non-empty result, and a valid Artificial Analysis URL. GitHub
+Actions runs the deterministic suite on Node.js 18 and 22; it does not depend
+on Artificial Analysis availability.
+
 ## Linux: invoke as `alg`
 
 From this directory, make the script executable and add a persistent Bash

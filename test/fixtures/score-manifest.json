@@ -1,0 +1,38 @@
+{
+  "models": [
+    {
+      "slug": "current-alpha",
+      "intelligenceIndex": 49.5,
+      "isOpenWeights": true,
+      "sizeClass": "small",
+      "creator": {
+        "slug": "lab-a"
+      }
+    },
+    {
+      "slug": "current-beta",
+      "intelligenceIndex": 50,
+      "isOpenWeights": false,
+      "sizeClass": "large",
+      "creator": {
+        "slug": "lab-b"
+      }
+    },
+    {
+      "slug": "current-gamma",
+      "intelligenceIndex": 50.49,
+      "isOpenWeights": true,
+      "sizeClass": "medium",
+      "creator": {
+        "slug": "lab-a"
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "dateLa": "2026-01-01",
+      "type": "modelUpdated",
+      "title": "A model changed"
+    }
+  ]
+}

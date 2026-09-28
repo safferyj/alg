@@ -1,0 +1,45 @@
+{
+  "models": [
+    {
+      "slug": "current-alpha",
+      "name": "Current Alpha",
+      "releaseSlug": "current-alpha-release",
+      "creator": {
+        "slug": "lab-a"
+      }
+    },
+    {
+      "slug": "current-beta",
+      "name": "Current Beta",
+      "releaseSlug": "current-beta-release",
+      "creator": {
+        "slug": "lab-b"
+      }
+    },
+    {
+      "slug": "current-gamma",
+      "name": "Current Gamma",
+      "releaseSlug": "current-gamma-release",
+      "creator": {
+        "slug": "lab-a"
+      }
+    }
+  ],
+  "releases": [
+    {
+      "slug": "current-alpha-release",
+      "releaseDate": "2024-02-10",
+      "deprecated": false
+    },
+    {
+      "slug": "current-beta-release",
+      "releaseDate": "2023-07-05",
+      "deprecated": true
+    },
+    {
+      "slug": "current-gamma-release",
+      "releaseDate": "2025-04-25",
+      "deprecated": false
+    }
+  ]
+}

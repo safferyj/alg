@@ -1,0 +1,15 @@
+{
+  "name": "alg",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Artificial Analysis Intelligence Index link generator",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "npm run test:deterministic",
+    "test:deterministic": "node --test test/alg.test.mjs",
+    "test:live": "node --test test/live.test.mjs"
+  }
+}

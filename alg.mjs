@@ -3,6 +3,7 @@
 import { createHash, createDecipheriv } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { gunzipSync } from "node:zlib";
 
 const SITE = "https://artificialanalysis.ai";
@@ -57,8 +58,8 @@ const CANONICAL_OPTION_ORDER = new Map([
   ["--two", 15],
 ]);
 
-function printUsage() {
-  console.log(`alg - Artificial Analysis Link Generator
+function printUsage(output = console.log) {
+  output(`alg - Artificial Analysis Link Generator
 
 Usage:
   node alg.mjs [options]
@@ -139,10 +140,15 @@ function walk(value, visitor) {
   }
 }
 
-async function fetchWithTimeout(url, label, readResponse) {
+async function fetchWithTimeout(
+  url,
+  label,
+  readResponse,
+  fetchImpl = globalThis.fetch,
+) {
   const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(url, { signal });
+    const response = await fetchImpl(url, { signal });
     return await readResponse(response);
   } catch (error) {
     if (signal.aborted) {
@@ -155,6 +161,32 @@ async function fetchWithTimeout(url, label, readResponse) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`${label} request failed: ${detail}`, { cause: error });
   }
+}
+
+function normalizeModelCatalog(value) {
+  const releasesBySlug = new Map(
+    Array.isArray(value.releases)
+      ? value.releases
+          .filter(
+            (release) => isObject(release) && typeof release.slug === "string",
+          )
+          .map((release) => [release.slug, release])
+      : [],
+  );
+
+  return value.models.map((model) => {
+    if (
+      isObject(model) &&
+      !isObject(model.release) &&
+      typeof model.releaseSlug === "string"
+    ) {
+      const release = releasesBySlug.get(model.releaseSlug);
+      if (release) {
+        return { ...model, release };
+      }
+    }
+    return model;
+  });
 }
 
 function findModelCatalog(payloads) {
@@ -173,29 +205,7 @@ function findModelCatalog(payloads) {
             typeof model.releaseSlug === "string"),
       );
       if (modelEntries.length >= value.models.length * 0.8) {
-        const releasesBySlug = new Map(
-          Array.isArray(value.releases)
-            ? value.releases
-                .filter(
-                  (release) =>
-                    isObject(release) && typeof release.slug === "string",
-                )
-                .map((release) => [release.slug, release])
-            : [],
-        );
-        catalog = value.models.map((model) => {
-          if (
-            isObject(model) &&
-            !isObject(model.release) &&
-            typeof model.releaseSlug === "string"
-          ) {
-            const release = releasesBySlug.get(model.releaseSlug);
-            if (release) {
-              return { ...model, release };
-            }
-          }
-          return model;
-        });
+        catalog = normalizeModelCatalog(value);
       }
     });
     if (catalog) {
@@ -259,11 +269,15 @@ function findManifestReferences(payloads) {
   return [...references.values()];
 }
 
-async function decryptManifest(reference) {
+async function decryptManifest(
+  reference,
+  site = SITE,
+  fetchImpl = globalThis.fetch,
+) {
   const key = Buffer.from(reference.key, "hex");
   const nonce = createHash("sha256").update(key).digest().subarray(0, 12);
   const ciphertext = await fetchWithTimeout(
-    `${SITE}${reference.path}`,
+    `${site}${reference.path}`,
     "Score manifest",
     async (response) => {
       if (!response.ok) {
@@ -271,6 +285,7 @@ async function decryptManifest(reference) {
       }
       return Buffer.from(await response.arrayBuffer());
     },
+    fetchImpl,
   );
 
   if (ciphertext.length <= 16) {
@@ -286,13 +301,17 @@ async function decryptManifest(reference) {
   return JSON.parse(gunzipSync(compressed).toString("utf8"));
 }
 
-async function findScoreManifest(payloads) {
+async function findScoreManifest(
+  payloads,
+  site = SITE,
+  fetchImpl = globalThis.fetch,
+) {
   const references = findManifestReferences(payloads);
   const failures = [];
 
   for (const reference of references) {
     try {
-      const data = await decryptManifest(reference);
+      const data = await decryptManifest(reference, site, fetchImpl);
       if (
         isObject(data) &&
         Array.isArray(data.models) &&
@@ -1046,8 +1065,14 @@ async function writeJsonExport(
   payloads,
   html,
   args,
+  runtime = {},
 ) {
-  const generatedAtDate = new Date();
+  const {
+    writeFileImpl = writeFile,
+    cwd = process.cwd(),
+    now = () => new Date(),
+  } = runtime;
+  const generatedAtDate = now();
   const generatedAt = formatLocalTimestamp(generatedAtDate);
   const canonicalArgs = getCanonicalArguments(args);
   const { models, warnings } = mergeSelectedModels(
@@ -1078,9 +1103,9 @@ async function writeJsonExport(
       suffix === 0
         ? baseFilename
         : baseFilename.replace(/\.json$/, `-${suffix}.json`);
-    filePath = join(process.cwd(), filename);
+    filePath = join(cwd, filename);
     try {
-      await writeFile(filePath, serialized, {
+      await writeFileImpl(filePath, serialized, {
         encoding: "utf8",
         flag: "wx",
       });
@@ -1095,17 +1120,26 @@ async function writeJsonExport(
   return { filePath, warnings };
 }
 
-async function main() {
-  const args = process.argv.slice(2);
+async function run(args = process.argv.slice(2), dependencies = {}) {
+  const {
+    site = SITE,
+    fetchImpl = globalThis.fetch,
+    writeFileImpl = writeFile,
+    cwd = process.cwd(),
+    now = () => new Date(),
+    stdout = (...values) => console.log(...values),
+    stderr = (...values) => console.error(...values),
+  } = dependencies;
+
   if (args.includes("--help") || args.includes("-h")) {
-    printUsage();
-    return;
+    printUsage(stdout);
+    return { help: true };
   }
 
   const options = parseArguments(args);
   const inputUrl = options.inputUrl;
   const html = await fetchWithTimeout(
-    `${SITE}/`,
+    `${site}/`,
     "Artificial Analysis catalog",
     async (response) => {
       if (!response.ok) {
@@ -1115,11 +1149,12 @@ async function main() {
       }
       return response.text();
     },
+    fetchImpl,
   );
 
   const payloads = extractFlightPayloads(html);
   const catalog = findModelCatalog(payloads);
-  const scoreManifest = await findScoreManifest(payloads);
+  const scoreManifest = await findScoreManifest(payloads, site, fetchImpl);
   const scoreModels = scoreManifest.models;
   const requestedSlugs = inputUrl
     ? [...new Set((inputUrl.searchParams.get("models") ?? "").split(",").filter(Boolean))]
@@ -1188,10 +1223,10 @@ async function main() {
     throw new Error("No models remain after applying the requested filters.");
   }
 
-  const output = new URL(`${SITE}/`);
+  const output = new URL(`${site}/`);
   output.searchParams.set("models", selected.join(","));
   output.hash = INDEX_HASH;
-  const modelsOutput = new URL(`${SITE}/models`);
+  const modelsOutput = new URL(`${site}/models`);
   modelsOutput.searchParams.set("models", selected.join(","));
   modelsOutput.hash = INDEX_HASH;
 
@@ -1204,75 +1239,115 @@ async function main() {
         payloads,
         html,
         args,
+        { writeFileImpl, cwd, now },
       )
     : null;
   const unscored = selected.filter(
     (slug) => !Number.isFinite(scoresBySlug.get(slug)?.intelligenceIndex),
   );
-  console.log(output.toString());
+  stdout(output.toString());
   if (options.two) {
-    console.log();
-    console.log(modelsOutput.toString());
-    console.log();
+    stdout();
+    stdout(modelsOutput.toString());
+    stdout();
   }
   if (jsonExport) {
-    console.error(`Wrote JSON export to ${jsonExport.filePath}.`);
+    stderr(`Wrote JSON export to ${jsonExport.filePath}.`);
     for (const warning of jsonExport.warnings) {
-      console.error(
+      stderr(
         `Warning: ${warning.path} differs between the catalog and manifest; ` +
           `using the manifest value. Catalog=${formatDiagnosticValue(warning.catalogValue)}; ` +
           `manifest=${formatDiagnosticValue(warning.manifestValue)}.`,
       );
     }
   }
-  console.error(`Kept ${selected.length} of ${requestedSlugs.length} requested models.`);
+  stderr(`Kept ${selected.length} of ${requestedSlugs.length} requested models.`);
   if (nameFiltered.length < requestedSlugs.length) {
-    console.error(
+    stderr(
       `Excluded ${requestedSlugs.length - nameFiltered.length} models by name filter.`,
     );
   }
   if (dateFiltered.length < nameFiltered.length) {
-    console.error(
+    stderr(
       `Excluded ${nameFiltered.length - dateFiltered.length} models by release-date filter.`,
     );
   }
   if (sizeFiltered.length < dateFiltered.length) {
-    console.error(
+    stderr(
       `Excluded ${dateFiltered.length - sizeFiltered.length} models by size class.`,
     );
   }
   if (deprecatedFiltered.length < sizeFiltered.length) {
-    console.error(
+    stderr(
       `Excluded ${sizeFiltered.length - deprecatedFiltered.length} models by deprecation status.`,
     );
   }
   if (weightFiltered.length < deprecatedFiltered.length) {
-    console.error(
+    stderr(
       `Excluded ${deprecatedFiltered.length - weightFiltered.length} models by weight class.`,
     );
   }
   if (scoreFiltered.length < weightFiltered.length) {
-    console.error(
+    stderr(
       `Excluded ${weightFiltered.length - scoreFiltered.length} models by score range.`,
     );
   }
   if (groupedCount < scoreFiltered.length) {
-    console.error(
+    stderr(
       `Removed ${scoreFiltered.length - groupedCount} lower-scoring entries during grouping.`,
     );
   }
   if (selected.length < groupedCount) {
-    console.error(`Applied the --top limit and removed ${groupedCount - selected.length} models.`);
+    stderr(`Applied the --top limit and removed ${groupedCount - selected.length} models.`);
   }
   if (unscored.length) {
-    console.error(
+    stderr(
       `${unscored.length} retained model(s) had no numeric Intelligence Index score; ties default to catalog order.`,
     );
   }
+
+  return {
+    selected,
+    requestedSlugs,
+    outputUrl: output.toString(),
+    modelsOutputUrl: modelsOutput.toString(),
+    jsonExport,
+  };
 }
 
-main().catch((error) => {
-  const message = error.message;
-  console.error(message.startsWith("No models remain") ? message : `Error: ${message}`);
+function reportError(error, stderr = console.error) {
+  const message = error instanceof Error ? error.message : String(error);
+  stderr(message.startsWith("No models remain") ? message : `Error: ${message}`);
   process.exitCode = 1;
-});
+}
+
+export {
+  extractFlightPayloads,
+  findIntelligenceIndexMetadata,
+  findModelCatalog,
+  findPageIntelligenceIndexMetadata,
+  findScoreManifest,
+  filterByDeprecatedStatus,
+  filterByName,
+  filterByReleaseDate,
+  filterByScore,
+  filterBySize,
+  filterByWeight,
+  getCanonicalArguments,
+  getFilenameArguments,
+  mergeSelectedModels,
+  normalizeModelCatalog,
+  parseArguments,
+  selectHighestScoringLabs,
+  selectHighestScoringVariants,
+  sortByScore,
+  stringifyJsonExport,
+  run,
+};
+
+if (
+  process.argv[1] &&
+  pathToFileURL(process.argv[1]).href === import.meta.url
+) {
+  run().catch((error) => reportError(error));
+}
