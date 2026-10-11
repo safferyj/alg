@@ -144,6 +144,9 @@ Without `--model` or `--lab`, no grouping is applied and the full requested mode
 list is retained. `--model` and `--lab` are alternative grouping modes; supplying
 both is redundant and has the same result as `--lab`.
 
+When `--lab` encounters a model without lab data, it prints a warning and
+retains that model as an ungrouped entry.
+
 Without `--url`, all models in the current Artificial Analysis catalog are used.
 
 Use `--url` when an existing `alg` generated Artificial Analysis link should act

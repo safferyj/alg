@@ -76,18 +76,21 @@ function encryptManifest(manifest, keyHex) {
   return Buffer.concat([cipher.update(compressed), cipher.final(), cipher.getAuthTag()]);
 }
 
-function buildRunFixture() {
+function buildRunFixture({ missingLabSlug = null } = {}) {
   const models = [...currentCatalog.models];
   const releases = [...currentCatalog.releases];
   for (let index = 0; index < 97; index += 1) {
     const slug = `fixture-model-${index}`;
     const releaseSlug = `${slug}-release`;
-    models.push({
+    const model = {
       slug,
       name: `Fixture Model ${index}`,
       releaseSlug,
-      creator: { slug: `fixture-lab-${index}` },
-    });
+    };
+    if (slug !== missingLabSlug) {
+      model.creator = { slug: `fixture-lab-${index}` };
+    }
+    models.push(model);
     releases.push({
       slug: releaseSlug,
       releaseDate: "2025-01-01",
@@ -444,6 +447,39 @@ test("groups by release and lab while preserving ties in requested order", () =>
   );
 });
 
+test("warns and retains models without lab data as ungrouped entries", () => {
+  const catalogMap = catalogBySlug([
+    { slug: "alpha-low" },
+    { slug: "missing-lab" },
+    { slug: "alpha-high" },
+  ]);
+  const scores = scoresBySlug([
+    {
+      slug: "alpha-low",
+      intelligenceIndex: 40,
+      creator: { slug: "lab-a" },
+    },
+    { slug: "missing-lab", intelligenceIndex: 50 },
+    {
+      slug: "alpha-high",
+      intelligenceIndex: 45,
+      creator: { slug: "lab-a" },
+    },
+  ]);
+  const missingLabs = [];
+
+  assert.deepEqual(
+    selectHighestScoringLabs(
+      ["alpha-low", "missing-lab", "alpha-high"],
+      catalogMap,
+      scores,
+      (slug) => missingLabs.push(slug),
+    ),
+    ["missing-lab", "alpha-high"],
+  );
+  assert.deepEqual(missingLabs, ["missing-lab"]);
+});
+
 test("extracts page payloads and decrypts a score manifest fixture", async () => {
   const key = "22".repeat(32);
   const manifest = {
@@ -608,6 +644,28 @@ test("runs the full deterministic CLI path with injected network and file adapte
   ]);
   assert.match(stderr.join("\n"), /Wrote JSON export/);
   assert.match(stderr.join("\n"), /Kept 3 of 100 requested models/);
+});
+
+test("warns when --lab encounters a model without lab data", async () => {
+  const fixture = buildRunFixture({ missingLabSlug: "fixture-model-0" });
+  const stdout = [];
+  const stderr = [];
+  const result = await run(
+    ["--lab", "--top", "20"],
+    {
+      site: "https://fixture.test",
+      fetchImpl: fixture.fetchImpl,
+      stdout: (...values) => stdout.push(values.join(" ")),
+      stderr: (...values) => stderr.push(values.join(" ")),
+    },
+  );
+
+  assert.equal(result.selected.length, 20);
+  assert.match(
+    stderr.join("\n"),
+    /Warning: Could not determine the lab for model fixture-model-0; retaining it without lab grouping\./,
+  );
+  assert.equal(stdout.length, 1);
 });
 
 test("keeps the executable help path working in a child process", () => {

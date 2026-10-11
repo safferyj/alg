@@ -114,6 +114,9 @@ Without --model or --lab, no grouping is applied. --model and --lab are
 alternative grouping modes; supplying both is redundant and has the same result
 as --lab.
 
+When --lab encounters a model without lab data, it warns and retains that model
+as an ungrouped entry.
+
 Without --url, all models in the current Artificial Analysis catalog are used.
 With --url, the existing model set is preserved and all other filters are
 applied only to that set.
@@ -709,7 +712,12 @@ function selectHighestScoringVariants(requestedSlugs, catalogBySlug, scoresBySlu
   );
 }
 
-function selectHighestScoringLabs(requestedSlugs, catalogBySlug, scoresBySlug) {
+function selectHighestScoringLabs(
+  requestedSlugs,
+  catalogBySlug,
+  scoresBySlug,
+  onMissingLab = () => {},
+) {
   return selectBestByGroup(
     requestedSlugs,
     catalogBySlug,
@@ -718,7 +726,8 @@ function selectHighestScoringLabs(requestedSlugs, catalogBySlug, scoresBySlug) {
       const creator = scoreModel?.creator ?? model.creator;
       const lab = creator?.slug ?? creator?.id ?? creator?.name;
       if (!lab) {
-        throw new Error(`Could not determine the lab for model ${model.slug}.`);
+        onMissingLab(model.slug);
+        return Symbol(`missing-lab:${model.slug}`);
       }
       return lab;
     },
@@ -1268,11 +1277,17 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
   }
 
   let selected = scoreFiltered;
+  const missingLabModels = [];
   if (options.model) {
     selected = selectHighestScoringVariants(selected, catalogBySlug, scoresBySlug);
   }
   if (options.lab) {
-    selected = selectHighestScoringLabs(selected, catalogBySlug, scoresBySlug);
+    selected = selectHighestScoringLabs(
+      selected,
+      catalogBySlug,
+      scoresBySlug,
+      (slug) => missingLabModels.push(slug),
+    );
   }
 
   const groupedCount = selected.length;
@@ -1321,6 +1336,12 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
           `manifest=${formatDiagnosticValue(warning.manifestValue)}.`,
       );
     }
+  }
+  for (const slug of missingLabModels) {
+    stderr(
+      `Warning: Could not determine the lab for model ${slug}; ` +
+        "retaining it without lab grouping.",
+    );
   }
   stderr(`Kept ${selected.length} of ${requestedSlugs.length} requested models.`);
   if (nameFiltered.length < requestedSlugs.length) {
