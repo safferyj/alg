@@ -79,14 +79,16 @@ models were retained and which filters reduced the set.
 
 If neither `--open` nor `--closed` is specified, both weight classes are
 included. Supplying both includes both classes explicitly.
+When `--open` or `--closed` is active and a model has no weight-class data, the
+model is excluded from that filter and a warning is printed.
 
 If neither `--reasoning` nor `--instruct` is specified, both model response
 styles are included. Supplying both includes both styles explicitly. `--reasoning`
 includes only reasoning models, while `--instruct` includes only non-reasoning
 models.
 These flags use Artificial Analysis's `isReasoning` score-manifest field; if that
-field is unavailable for a requested model, the command stops with an error
-rather than guessing.
+field is unavailable for a requested model, the model is excluded from the
+filter and a warning is printed rather than guessing.
 
 If neither `--current` nor `--deprecated` is specified, no deprecation-status
 filtering is applied. Supplying both includes both statuses explicitly.
@@ -98,6 +100,9 @@ Analysis has not marked the model as deprecated:
 node alg.mjs --current --top 10
 ```
 
+When an active current/deprecated filter encounters a model without deprecation
+data, the model is excluded from that filter and a warning is printed.
+
 `--before` is an exclusive release-date filter and `--after` is inclusive. Both
 require a valid ISO calendar date in `YYYY-MM-DD` format. They can be combined
 to define a release-date range:
@@ -105,6 +110,9 @@ to define a release-date range:
 ```bash
 node alg.mjs --after 2025-01-01 --before 2026-01-01
 ```
+
+Models without a valid release date are excluded from an active `--before` or
+`--after` filter and a warning is printed.
 
 `--min` and `--max` are inclusive against AA's rounded display score. To align
 the raw decimal Intelligence Index score with that display, `--min n` uses a
@@ -118,6 +126,7 @@ node alg.mjs --min 40 --max 50 --model --top 10
 ```
 
 Entries without a numeric score are excluded when either threshold is supplied.
+When a score is missing while either threshold is active, a warning is printed.
 
 `--size` is case-insensitive. Separate multiple alternatives with comma (`,`) to
 match any of them. **Do not include spaces in the size string.** Accepted values
@@ -130,6 +139,9 @@ named classes as well as in `unknown`:
 node alg.mjs --size large,medium
 ```
 
+When `--size` is active and a model has no size-class data, a warning is printed
+and the model is treated as `unknown`.
+
 `--filter` is a case-insensitive substring filter on model names. Separate
 multiple alternatives with comma (`,`) to match any of them. **Do not include
 spaces in the filter string.** For example:
@@ -139,10 +151,15 @@ node alg.mjs --filter qwen3.8,qwen3.6
 ```
 
 The filter can be combined with every other option, including `--url`.
+Models without a name are excluded from an active `--filter` and a warning is
+printed.
 
 Without `--model` or `--lab`, no grouping is applied and the full requested model
 list is retained. `--model` and `--lab` are alternative grouping modes; supplying
 both is redundant and has the same result as `--lab`.
+
+When `--model` encounters a model without release data, it prints a warning and
+retains that model as an ungrouped entry.
 
 When `--lab` encounters a model without lab data, it prints a warning and
 retains that model as an ungrouped entry.

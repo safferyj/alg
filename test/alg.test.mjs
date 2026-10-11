@@ -388,6 +388,103 @@ test("supports flat and nested release metadata in status filters", () => {
   );
 });
 
+test("warns and excludes models missing active filter metadata", () => {
+  const missingSlug = "missing";
+  const catalog = catalogBySlug([{ slug: missingSlug }]);
+  const scores = scoresBySlug([]);
+  const warnings = [];
+  const record = (field) => (slug) => warnings.push(`${field}:${slug}`);
+
+  assert.deepEqual(
+    filterByName(
+      [missingSlug],
+      catalog,
+      parseArguments(["--filter", "fixture"]),
+      record("name"),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    filterByReleaseDate(
+      [missingSlug],
+      catalog,
+      parseArguments(["--after", "2025-01-01"]),
+      record("release-date"),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    filterBySize(
+      [missingSlug],
+      scores,
+      parseArguments(["--size", "large"]),
+      record("size"),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    filterByDeprecatedStatus(
+      [missingSlug],
+      catalog,
+      parseArguments(["--current"]),
+      record("deprecation"),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    filterByWeight(
+      [missingSlug],
+      scores,
+      parseArguments(["--open"]),
+      record("weight"),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    filterByReasoning(
+      [missingSlug],
+      scores,
+      parseArguments(["--reasoning"]),
+      record("reasoning"),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    filterByScore(
+      [missingSlug],
+      scores,
+      parseArguments(["--min", "50"]),
+      record("score"),
+    ),
+    [],
+  );
+
+  assert.deepEqual(warnings, [
+    "name:missing",
+    "release-date:missing",
+    "size:missing",
+    "deprecation:missing",
+    "weight:missing",
+    "reasoning:missing",
+    "score:missing",
+  ]);
+});
+
+test("treats missing size data as unknown when unknown is selected", () => {
+  const warnings = [];
+
+  assert.deepEqual(
+    filterBySize(
+      ["missing"],
+      scoresBySlug([]),
+      parseArguments(["--size", "unknown"]),
+      (slug) => warnings.push(slug),
+    ),
+    ["missing"],
+  );
+  assert.deepEqual(warnings, ["missing"]);
+});
+
 test("filters instruct and reasoning models from the manifest classification", () => {
   const slugs = ["current-alpha", "current-beta", "current-gamma"];
   const scores = scoresBySlug(scoreManifest.models);
@@ -408,15 +505,17 @@ test("filters instruct and reasoning models from the manifest classification", (
     ),
     slugs,
   );
-  assert.throws(
-    () =>
-      filterByReasoning(
-        ["unknown"],
-        scores,
-        parseArguments(["--reasoning"]),
-      ),
-    /Could not determine the reasoning status/,
+  const missing = [];
+  assert.deepEqual(
+    filterByReasoning(
+      ["unknown"],
+      scores,
+      parseArguments(["--reasoning"]),
+      (slug) => missing.push(slug),
+    ),
+    [],
   );
+  assert.deepEqual(missing, ["unknown"]);
 });
 
 test("groups by release and lab while preserving ties in requested order", () => {
@@ -445,6 +544,31 @@ test("groups by release and lab while preserving ties in requested order", () =>
     sortByScore(["current-gamma", "current-alpha", "current-beta"], scores),
     ["current-gamma", "current-alpha", "current-beta"],
   );
+});
+
+test("warns and retains models without release data as ungrouped entries", () => {
+  const catalogMap = catalogBySlug([
+    { slug: "release-low", releaseSlug: "release-a" },
+    { slug: "missing-release" },
+    { slug: "release-high", releaseSlug: "release-a" },
+  ]);
+  const scores = scoresBySlug([
+    { slug: "release-low", intelligenceIndex: 40 },
+    { slug: "missing-release", intelligenceIndex: 50 },
+    { slug: "release-high", intelligenceIndex: 45 },
+  ]);
+  const missingReleases = [];
+
+  assert.deepEqual(
+    selectHighestScoringVariants(
+      ["release-low", "missing-release", "release-high"],
+      catalogMap,
+      scores,
+      (slug) => missingReleases.push(slug),
+    ),
+    ["missing-release", "release-high"],
+  );
+  assert.deepEqual(missingReleases, ["missing-release"]);
 });
 
 test("warns and retains models without lab data as ungrouped entries", () => {
@@ -664,6 +788,32 @@ test("warns when --lab encounters a model without lab data", async () => {
   assert.match(
     stderr.join("\n"),
     /Warning: Could not determine the lab for model fixture-model-0; retaining it without lab grouping\./,
+  );
+  assert.equal(stdout.length, 1);
+});
+
+test("warns and continues when an active filter lacks model metadata", async () => {
+  const fixture = buildRunFixture();
+  const stdout = [];
+  const stderr = [];
+  const result = await run(
+    [
+      "--url",
+      "https://fixture.test/?models=fixture-model-0,current-alpha",
+      "--open",
+    ],
+    {
+      site: "https://fixture.test",
+      fetchImpl: fixture.fetchImpl,
+      stdout: (...values) => stdout.push(values.join(" ")),
+      stderr: (...values) => stderr.push(values.join(" ")),
+    },
+  );
+
+  assert.deepEqual(result.selected, ["current-alpha"]);
+  assert.match(
+    stderr.join("\n"),
+    /Warning: Could not determine the weight class for model fixture-model-0; excluding it from open\/closed filtering\./,
   );
   assert.equal(stdout.length, 1);
 });

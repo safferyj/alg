@@ -101,21 +101,32 @@ Options:
 
 If neither --open nor --closed is specified, both weight classes are included.
 Supplying both includes both classes explicitly.
+When --open or --closed is active and a model has no weight-class data, the
+model is excluded from that filter and a warning is printed.
 
 If neither --reasoning nor --instruct is specified, both model response styles
 are included. Supplying both includes both styles explicitly. --reasoning selects
 reasoning models; --instruct selects non-reasoning models.
+If response-style data is unavailable for an active filter, the model is
+excluded from that filter and a warning is printed.
 
 If neither --current nor --deprecated is specified, no deprecation-status
 filtering is applied. Supplying both includes both statuses explicitly. --current
 means that Artificial Analysis has not marked a model as deprecated.
+If deprecation data is unavailable for an active filter, the model is excluded
+from that filter and a warning is printed.
 
 Without --model or --lab, no grouping is applied. --model and --lab are
 alternative grouping modes; supplying both is redundant and has the same result
 as --lab.
+When --model encounters a model without release data, it warns and retains that
+model as an ungrouped entry.
 
 When --lab encounters a model without lab data, it warns and retains that model
 as an ungrouped entry.
+
+When an active filter requires metadata that is unavailable for a model, the
+filter-specific fallback is applied and a warning is printed.
 
 Without --url, all models in the current Artificial Analysis catalog are used.
 With --url, the existing model set is preserved and all other filters are
@@ -703,12 +714,24 @@ function selectBestByGroup(requestedSlugs, catalogBySlug, scoresBySlug, getGroup
   return selected;
 }
 
-function selectHighestScoringVariants(requestedSlugs, catalogBySlug, scoresBySlug) {
+function selectHighestScoringVariants(
+  requestedSlugs,
+  catalogBySlug,
+  scoresBySlug,
+  onMissingRelease = () => {},
+) {
   return selectBestByGroup(
     requestedSlugs,
     catalogBySlug,
     scoresBySlug,
-    (model) => model.release?.slug ?? model.releaseSlug ?? model.slug,
+    (model) => {
+      const release = model.release?.slug || model.releaseSlug;
+      if (!release) {
+        onMissingRelease(model.slug);
+        return Symbol(`missing-release:${model.slug}`);
+      }
+      return release;
+    },
   );
 }
 
@@ -734,57 +757,58 @@ function selectHighestScoringLabs(
   );
 }
 
-function filterByWeight(requestedSlugs, scoresBySlug, options) {
+function filterByWeight(
+  requestedSlugs,
+  scoresBySlug,
+  options,
+  onMissingWeight = () => {},
+) {
   if (options.open === options.closed) {
     return requestedSlugs;
   }
 
   const wantedOpenWeight = options.open;
-  const unclassified = [];
   const selected = requestedSlugs.filter((slug) => {
     const isOpenWeights = scoresBySlug.get(slug)?.isOpenWeights;
     if (typeof isOpenWeights !== "boolean") {
-      unclassified.push(slug);
+      onMissingWeight(slug);
       return false;
     }
     return isOpenWeights === wantedOpenWeight;
   });
 
-  if (unclassified.length) {
-    throw new Error(
-      `Could not determine the weight class for ${unclassified.length} requested model(s): ${unclassified.join(", ")}`,
-    );
-  }
-
   return selected;
 }
 
-function filterByReasoning(requestedSlugs, scoresBySlug, options) {
+function filterByReasoning(
+  requestedSlugs,
+  scoresBySlug,
+  options,
+  onMissingReasoning = () => {},
+) {
   if (options.instruct === options.reasoning) {
     return requestedSlugs;
   }
 
   const wantedReasoning = options.reasoning;
-  const unclassified = [];
   const selected = requestedSlugs.filter((slug) => {
     const isReasoning = scoresBySlug.get(slug)?.isReasoning;
     if (typeof isReasoning !== "boolean") {
-      unclassified.push(slug);
+      onMissingReasoning(slug);
       return false;
     }
     return isReasoning === wantedReasoning;
   });
 
-  if (unclassified.length) {
-    throw new Error(
-      `Could not determine the reasoning status for ${unclassified.length} requested model(s): ${unclassified.join(", ")}`,
-    );
-  }
-
   return selected;
 }
 
-function filterByName(requestedSlugs, catalogBySlug, options) {
+function filterByName(
+  requestedSlugs,
+  catalogBySlug,
+  options,
+  onMissingName = () => {},
+) {
   if (options.nameFilter === null) {
     return requestedSlugs;
   }
@@ -796,14 +820,20 @@ function filterByName(requestedSlugs, catalogBySlug, options) {
     .filter(Boolean);
   return requestedSlugs.filter((slug) => {
     const name = catalogBySlug.get(slug)?.name;
-    return (
-      typeof name === "string" &&
-      filters.some((filter) => name.toLowerCase().includes(filter))
-    );
+    if (typeof name !== "string" || !name) {
+      onMissingName(slug);
+      return false;
+    }
+    return filters.some((filter) => name.toLowerCase().includes(filter));
   });
 }
 
-function filterByReleaseDate(requestedSlugs, catalogBySlug, options) {
+function filterByReleaseDate(
+  requestedSlugs,
+  catalogBySlug,
+  options,
+  onMissingReleaseDate = () => {},
+) {
   if (options.beforeDate === null && options.afterDate === null) {
     return requestedSlugs;
   }
@@ -812,6 +842,7 @@ function filterByReleaseDate(requestedSlugs, catalogBySlug, options) {
     const model = catalogBySlug.get(slug);
     const releaseDate = model?.releaseDate ?? model?.release?.releaseDate;
     if (!isValidIsoDate(releaseDate)) {
+      onMissingReleaseDate(slug);
       return false;
     }
     return (
@@ -821,7 +852,12 @@ function filterByReleaseDate(requestedSlugs, catalogBySlug, options) {
   });
 }
 
-function filterBySize(requestedSlugs, scoresBySlug, options) {
+function filterBySize(
+  requestedSlugs,
+  scoresBySlug,
+  options,
+  onMissingSize = () => {},
+) {
   if (options.sizeClasses === null) {
     return requestedSlugs;
   }
@@ -830,37 +866,50 @@ function filterBySize(requestedSlugs, scoresBySlug, options) {
     const sizeClass = scoresBySlug.get(slug)?.sizeClass;
     const normalizedSizeClass =
       typeof sizeClass === "string" ? sizeClass.toLowerCase() : "unknown";
-    return options.sizeClasses.has(normalizedSizeClass);
+    if (
+      typeof sizeClass !== "string" ||
+      !sizeClass ||
+      !SIZE_CLASSES.has(normalizedSizeClass)
+    ) {
+      onMissingSize(slug);
+    }
+    const effectiveSizeClass = SIZE_CLASSES.has(normalizedSizeClass)
+      ? normalizedSizeClass
+      : "unknown";
+    return options.sizeClasses.has(effectiveSizeClass);
   });
 }
 
-function filterByDeprecatedStatus(requestedSlugs, catalogBySlug, options) {
+function filterByDeprecatedStatus(
+  requestedSlugs,
+  catalogBySlug,
+  options,
+  onMissingDeprecatedStatus = () => {},
+) {
   if (options.deprecated === options.current) {
     return requestedSlugs;
   }
 
   const wantedDeprecated = options.deprecated;
-  const unclassified = [];
   const selected = requestedSlugs.filter((slug) => {
     const model = catalogBySlug.get(slug);
     const deprecated = model?.deprecated ?? model?.release?.deprecated;
     if (typeof deprecated !== "boolean") {
-      unclassified.push(slug);
+      onMissingDeprecatedStatus(slug);
       return false;
     }
     return deprecated === wantedDeprecated;
   });
 
-  if (unclassified.length) {
-    throw new Error(
-      `Could not determine the deprecation status for ${unclassified.length} requested model(s): ${unclassified.join(", ")}`,
-    );
-  }
-
   return selected;
 }
 
-function filterByScore(requestedSlugs, scoresBySlug, options) {
+function filterByScore(
+  requestedSlugs,
+  scoresBySlug,
+  options,
+  onMissingScore = () => {},
+) {
   if (options.minScore === null && options.maxScore === null) {
     return requestedSlugs;
   }
@@ -877,6 +926,7 @@ function filterByScore(requestedSlugs, scoresBySlug, options) {
   return requestedSlugs.filter((slug) => {
     const score = scoresBySlug.get(slug)?.intelligenceIndex;
     if (!Number.isFinite(score)) {
+      onMissingScore(slug);
       return false;
     }
     return (
@@ -1221,17 +1271,44 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
 
   const catalogBySlug = indexCatalogModels(requestedSlugs, catalog);
   const scoresBySlug = new Map(scoreModels.map((model) => [model.slug, model]));
-  const nameFiltered = filterByName(requestedSlugs, catalogBySlug, options);
+  const nameFiltered = filterByName(
+    requestedSlugs,
+    catalogBySlug,
+    options,
+    (slug) =>
+      stderr(
+        `Warning: Could not determine the name for model ${slug}; ` +
+          "excluding it from name filtering.",
+      ),
+  );
   if (nameFiltered.length === 0) {
     throw new Error("No models remain after applying the name filter.");
   }
 
-  const dateFiltered = filterByReleaseDate(nameFiltered, catalogBySlug, options);
+  const dateFiltered = filterByReleaseDate(
+    nameFiltered,
+    catalogBySlug,
+    options,
+    (slug) =>
+      stderr(
+        `Warning: Could not determine the release date for model ${slug}; ` +
+          "excluding it from release-date filtering.",
+      ),
+  );
   if (dateFiltered.length === 0) {
     throw new Error("No models remain after applying the release-date filter.");
   }
 
-  const sizeFiltered = filterBySize(dateFiltered, scoresBySlug, options);
+  const sizeFiltered = filterBySize(
+    dateFiltered,
+    scoresBySlug,
+    options,
+    (slug) =>
+      stderr(
+        `Warning: Could not determine the size class for model ${slug}; ` +
+          "treating it as unknown for size filtering.",
+      ),
+  );
   if (sizeFiltered.length === 0) {
     throw new Error("No models remain after applying the size-class filter.");
   }
@@ -1240,6 +1317,11 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
     sizeFiltered,
     catalogBySlug,
     options,
+    (slug) =>
+      stderr(
+        `Warning: Could not determine the deprecation status for model ${slug}; ` +
+          "excluding it from current/deprecated filtering.",
+      ),
   );
   if (deprecatedFiltered.length === 0) {
     throw new Error(
@@ -1251,6 +1333,11 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
     deprecatedFiltered,
     scoresBySlug,
     options,
+    (slug) =>
+      stderr(
+        `Warning: Could not determine the weight class for model ${slug}; ` +
+          "excluding it from open/closed filtering.",
+      ),
   );
   if (weightFiltered.length === 0) {
     throw new Error("No models remain after applying the weight-class filter.");
@@ -1260,6 +1347,11 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
     weightFiltered,
     scoresBySlug,
     options,
+    (slug) =>
+      stderr(
+        `Warning: Could not determine the reasoning status for model ${slug}; ` +
+          "excluding it from instruct/reasoning filtering.",
+      ),
   );
   if (reasoningFiltered.length === 0) {
     throw new Error(
@@ -1271,22 +1363,38 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
     reasoningFiltered,
     scoresBySlug,
     options,
+    (slug) =>
+      stderr(
+        `Warning: Could not determine a numeric Intelligence Index score for model ${slug}; ` +
+          "excluding it from score filtering.",
+      ),
   );
   if (scoreFiltered.length === 0) {
     throw new Error("No models remain after applying the score range filter.");
   }
-
   let selected = scoreFiltered;
-  const missingLabModels = [];
   if (options.model) {
-    selected = selectHighestScoringVariants(selected, catalogBySlug, scoresBySlug);
+    selected = selectHighestScoringVariants(
+      selected,
+      catalogBySlug,
+      scoresBySlug,
+      (slug) =>
+        stderr(
+          `Warning: Could not determine the release for model ${slug}; ` +
+            "retaining it without model grouping.",
+        ),
+    );
   }
   if (options.lab) {
     selected = selectHighestScoringLabs(
       selected,
       catalogBySlug,
       scoresBySlug,
-      (slug) => missingLabModels.push(slug),
+      (slug) =>
+        stderr(
+          `Warning: Could not determine the lab for model ${slug}; ` +
+            "retaining it without lab grouping.",
+        ),
     );
   }
 
@@ -1336,12 +1444,6 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
           `manifest=${formatDiagnosticValue(warning.manifestValue)}.`,
       );
     }
-  }
-  for (const slug of missingLabModels) {
-    stderr(
-      `Warning: Could not determine the lab for model ${slug}; ` +
-        "retaining it without lab grouping.",
-    );
   }
   stderr(`Kept ${selected.length} of ${requestedSlugs.length} requested models.`);
   if (nameFiltered.length < requestedSlugs.length) {
