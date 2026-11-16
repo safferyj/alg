@@ -204,44 +204,68 @@ function normalizeModelCatalog(value) {
   );
 
   return value.models.map((model) => {
-    if (
-      isObject(model) &&
-      !isObject(model.release) &&
-      typeof model.releaseSlug === "string"
-    ) {
-      const release = releasesBySlug.get(model.releaseSlug);
-      if (release) {
-        return { ...model, release };
-      }
+    if (!isObject(model)) {
+      return model;
+    }
+
+    const releaseSlug =
+      typeof model.release?.slug === "string"
+        ? model.release.slug
+        : model.releaseSlug;
+    if (typeof releaseSlug !== "string") {
+      return model;
+    }
+
+    const release = releasesBySlug.get(releaseSlug);
+    if (release) {
+      return {
+        ...model,
+        release: {
+          ...(isObject(model.release) ? model.release : {}),
+          ...release,
+        },
+      };
     }
     return model;
   });
 }
 
-function findModelCatalog(payloads) {
+function findCatalogReleases(payloads) {
+  let releases = [];
   for (const payload of payloads) {
-    let catalog;
     walk(payload.value, (value) => {
-      if (catalog || !Array.isArray(value.models) || value.models.length < 100) {
+      if (!Array.isArray(value.releases)) {
         return;
       }
 
-      const modelEntries = value.models.filter(
-        (model) =>
-          isObject(model) &&
-          typeof model.slug === "string" &&
-          ((isObject(model.release) && typeof model.release.slug === "string") ||
-            typeof model.releaseSlug === "string"),
+      const entries = value.releases.filter(
+        (release) => isObject(release) && typeof release.slug === "string",
       );
-      if (modelEntries.length >= value.models.length * 0.8) {
-        catalog = normalizeModelCatalog(value);
+      if (entries.length > releases.length) {
+        releases = entries;
       }
     });
-    if (catalog) {
-      return catalog;
-    }
   }
-  throw new Error("Could not find the current Artificial Analysis model catalog.");
+  return releases;
+}
+
+function findModelCatalog(payloads, scoreModels) {
+  if (
+    !Array.isArray(scoreModels) ||
+    scoreModels.length === 0 ||
+    !scoreModels.every(
+      (model) => isObject(model) && typeof model.slug === "string",
+    )
+  ) {
+    throw new Error(
+      "The Artificial Analysis score manifest does not contain a usable model catalog.",
+    );
+  }
+
+  return normalizeModelCatalog({
+    models: scoreModels,
+    releases: findCatalogReleases(payloads),
+  });
 }
 
 function extractFlightPayloads(html) {
@@ -1258,8 +1282,8 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
   );
 
   const payloads = extractFlightPayloads(html);
-  const catalog = findModelCatalog(payloads);
   const scoreManifest = await findScoreManifest(payloads, site, fetchImpl);
+  const catalog = findModelCatalog(payloads, scoreManifest.models);
   const scoreModels = scoreManifest.models;
   const requestedSlugs = inputUrl
     ? [...new Set((inputUrl.searchParams.get("models") ?? "").split(",").filter(Boolean))]

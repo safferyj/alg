@@ -111,7 +111,20 @@ function buildRunFixture({ missingLabSlug = null } = {}) {
       "/articles/artificial-analysis-intelligence-index-v4-3",
   };
   const html = flightHtml(pageValue);
-  const encryptedManifest = encryptManifest(scoreManifest, key);
+  const manifestModelsBySlug = new Map(
+    scoreManifest.models.map((model) => [model.slug, model]),
+  );
+  const manifest = {
+    ...scoreManifest,
+    models: models.map(
+      (model) =>
+        manifestModelsBySlug.get(model.slug) ?? {
+          slug: model.slug,
+          intelligenceIndex: null,
+        },
+    ),
+  };
+  const encryptedManifest = encryptManifest(manifest, key);
   const fetchImpl = async (url) => {
     if (url === "https://fixture.test/") {
       return responseFrom(html);
@@ -277,38 +290,46 @@ test("normalizes legacy and current Artificial Analysis catalog records", () => 
   assert.equal(current[1].release.deprecated, true);
 });
 
-test("finds the current catalog and ignores unrelated model arrays", () => {
-  const currentModels = Array.from({ length: 100 }, (_, index) => ({
-    slug: `model-${index}`,
-    name: `Model ${index}`,
-    releaseSlug: `release-${index}`,
-  }));
-  const releases = currentModels.map((model) => ({
-    slug: model.releaseSlug,
-    releaseDate: "2025-01-01",
-    deprecated: false,
-  }));
-  const catalog = findModelCatalog([
-    { value: { models: [{ slug: "unrelated" }] } },
-    { value: { models: currentModels, releases } },
-  ]);
-
-  assert.equal(catalog.length, 100);
-  assert.equal(catalog[42].release.slug, "release-42");
-});
-
-test("finds legacy catalogs with nested release records", () => {
-  const models = Array.from({ length: 100 }, (_, index) => ({
-    slug: `legacy-model-${index}`,
-    name: `Legacy Model ${index}`,
+test("uses all score-manifest models instead of a partial page list", () => {
+  const models = Array.from({ length: 150 }, (_, index) => ({
+    slug: `manifest-model-${index}`,
+    name: `Manifest Model ${index}`,
     release: {
-      slug: `legacy-release-${index}`,
+      id: `release-id-${index}`,
+      slug: `release-${index}`,
+      name: `Release ${index}`,
     },
   }));
-  const catalog = findModelCatalog([{ value: { models } }]);
+  const releases = models.map((model, index) => ({
+    slug: model.release.slug,
+    releaseDate: "2025-01-01",
+    deprecated: index === 1,
+  }));
+  const catalog = findModelCatalog(
+    [
+      { value: { models: models.slice(0, 100) } },
+      { value: { releases } },
+    ],
+    models,
+  );
 
-  assert.equal(catalog.length, 100);
-  assert.equal(catalog[42].release.slug, "legacy-release-42");
+  assert.equal(catalog.length, 150);
+  assert.equal(catalog[149].slug, "manifest-model-149");
+  assert.equal(catalog[1].release.id, "release-id-1");
+  assert.equal(catalog[1].release.releaseDate, "2025-01-01");
+  assert.equal(catalog[1].release.deprecated, true);
+});
+
+test("does not fall back to page models when the score manifest catalog is invalid", () => {
+  const pageModels = Array.from({ length: 100 }, (_, index) => ({
+    slug: `page-model-${index}`,
+    release: { slug: `page-release-${index}` },
+  }));
+
+  assert.throws(
+    () => findModelCatalog([{ value: { models: pageModels } }], []),
+    /score manifest does not contain a usable model catalog/,
+  );
 });
 
 test("applies name, date, size, weight, and deprecation filters", () => {
