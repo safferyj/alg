@@ -28,6 +28,7 @@ const LONG_OPTION_NAMES = new Map([
   ["-l", "--lab"],
   ["-t", "--top"],
   ["-u", "--url"],
+  ["-w", "--warn"],
   ["-2", "--two"],
   ["-j", "--json"],
   ["-h", "--help"],
@@ -59,9 +60,10 @@ const CANONICAL_OPTION_ORDER = new Map([
   ["--lab", 13],
   ["--top", 14],
   ["--url", 15],
-  ["--two", 16],
-  ["--json", 17],
-  ["--help", 18],
+  ["--warn", 16],
+  ["--two", 17],
+  ["--json", 18],
+  ["--help", 19],
 ]);
 
 function printUsage(output = console.log) {
@@ -94,6 +96,8 @@ Options:
   -l, --lab              Include only the best entry from each lab.
   -t, --top <n>          Return the top n entries by Intelligence Index score.
   -u, --url <url>        Use the models from an existing Artificial Analysis URL.
+  -w, --warn             Print per-model warnings for missing data encountered
+                         during filtering or grouping.
   -2, --two              Print two URLs, both the main entry page URL and
                          additionally the Models page URL.
   -j, --json             Write selected models to a timestamped JSON file.
@@ -102,31 +106,32 @@ Options:
 If neither --open nor --closed is specified, both weight classes are included.
 Supplying both includes both classes explicitly.
 When --open or --closed is active and a model has no weight-class data, the
-model is excluded from that filter and a warning is printed.
+model is excluded from that filter.
 
 If neither --reasoning nor --instruct is specified, both model response styles
 are included. Supplying both includes both styles explicitly. --reasoning selects
 reasoning models; --instruct selects non-reasoning models.
 If response-style data is unavailable for an active filter, the model is
-excluded from that filter and a warning is printed.
+excluded from that filter rather than guessing.
 
 If neither --current nor --deprecated is specified, no deprecation-status
 filtering is applied. Supplying both includes both statuses explicitly. --current
 means that Artificial Analysis has not marked a model as deprecated.
 If deprecation data is unavailable for an active filter, the model is excluded
-from that filter and a warning is printed.
+from that filter.
 
 Without --model or --lab, no grouping is applied. --model and --lab are
 alternative grouping modes; supplying both is redundant and has the same result
 as --lab.
-When --model encounters a model without release data, it warns and retains that
-model as an ungrouped entry.
+When --model encounters a model without release data, it retains that model as
+an ungrouped entry.
 
-When --lab encounters a model without lab data, it warns and retains that model
-as an ungrouped entry.
+When --lab encounters a model without lab data, it retains that model as an
+ungrouped entry.
 
-When an active filter requires metadata that is unavailable for a model, the
-filter-specific fallback is applied and a warning is printed.
+Models excluded because an active filter requires missing data are counted in a
+summary. Use --warn to print per-model warnings for missing data encountered
+during filtering or grouping; without it, those details are suppressed.
 
 Without --url, all models in the current Artificial Analysis catalog are used.
 With --url, the existing model set is preserved and all other filters are
@@ -564,6 +569,7 @@ function parseArguments(args) {
     instruct: false,
     reasoning: false,
     json: false,
+    warn: false,
     two: false,
   };
 
@@ -667,6 +673,8 @@ function parseArguments(args) {
       options.instruct = true;
     } else if (arg === "-g" || arg === "--reasoning") {
       options.reasoning = true;
+    } else if (arg === "-w" || arg === "--warn") {
+      options.warn = true;
     } else if (arg === "-j" || arg === "--json") {
       options.json = true;
     } else if (arg === "-2" || arg === "--two") {
@@ -1295,107 +1303,124 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
 
   const catalogBySlug = indexCatalogModels(requestedSlugs, catalog);
   const scoresBySlug = new Map(scoreModels.map((model) => [model.slug, model]));
+  const excludedForMissingData = new Set();
+  const reportMissingData = (slug, message, excluded = true) => {
+    if (excluded) {
+      excludedForMissingData.add(slug);
+    }
+    if (options.warn) {
+      stderr(`Warning: ${message}`);
+    }
+  };
+  const reportMissingDataSummary = () => {
+    const count = excludedForMissingData.size;
+    if (count > 0) {
+      stderr(`Excluded ${count} model${count === 1 ? "" : "s"} due to missing data.`);
+    }
+  };
+  const ensureModelsRemain = (models, message) => {
+    if (models.length === 0) {
+      reportMissingDataSummary();
+      throw new Error(message);
+    }
+  };
   const nameFiltered = filterByName(
     requestedSlugs,
     catalogBySlug,
     options,
     (slug) =>
-      stderr(
-        `Warning: Could not determine the name for model ${slug}; ` +
+      reportMissingData(
+        slug,
+        `Could not determine the name for model ${slug}; ` +
           "excluding it from name filtering.",
       ),
   );
-  if (nameFiltered.length === 0) {
-    throw new Error("No models remain after applying the name filter.");
-  }
+  ensureModelsRemain(nameFiltered, "No models remain after applying the name filter.");
 
   const dateFiltered = filterByReleaseDate(
     nameFiltered,
     catalogBySlug,
     options,
     (slug) =>
-      stderr(
-        `Warning: Could not determine the release date for model ${slug}; ` +
+      reportMissingData(
+        slug,
+        `Could not determine the release date for model ${slug}; ` +
           "excluding it from release-date filtering.",
       ),
   );
-  if (dateFiltered.length === 0) {
-    throw new Error("No models remain after applying the release-date filter.");
-  }
+  ensureModelsRemain(dateFiltered, "No models remain after applying the release-date filter.");
 
   const sizeFiltered = filterBySize(
     dateFiltered,
     scoresBySlug,
     options,
     (slug) =>
-      stderr(
-        `Warning: Could not determine the size class for model ${slug}; ` +
+      reportMissingData(
+        slug,
+        `Could not determine the size class for model ${slug}; ` +
           "treating it as unknown for size filtering.",
+        !options.sizeClasses.has("unknown"),
       ),
   );
-  if (sizeFiltered.length === 0) {
-    throw new Error("No models remain after applying the size-class filter.");
-  }
+  ensureModelsRemain(sizeFiltered, "No models remain after applying the size-class filter.");
 
   const deprecatedFiltered = filterByDeprecatedStatus(
     sizeFiltered,
     catalogBySlug,
     options,
     (slug) =>
-      stderr(
-        `Warning: Could not determine the deprecation status for model ${slug}; ` +
+      reportMissingData(
+        slug,
+        `Could not determine the deprecation status for model ${slug}; ` +
           "excluding it from current/deprecated filtering.",
       ),
   );
-  if (deprecatedFiltered.length === 0) {
-    throw new Error(
-      "No models remain after applying the deprecation-status filter.",
-    );
-  }
+  ensureModelsRemain(
+    deprecatedFiltered,
+    "No models remain after applying the deprecation-status filter.",
+  );
 
   const weightFiltered = filterByWeight(
     deprecatedFiltered,
     scoresBySlug,
     options,
     (slug) =>
-      stderr(
-        `Warning: Could not determine the weight class for model ${slug}; ` +
+      reportMissingData(
+        slug,
+        `Could not determine the weight class for model ${slug}; ` +
           "excluding it from open/closed filtering.",
       ),
   );
-  if (weightFiltered.length === 0) {
-    throw new Error("No models remain after applying the weight-class filter.");
-  }
+  ensureModelsRemain(weightFiltered, "No models remain after applying the weight-class filter.");
 
   const reasoningFiltered = filterByReasoning(
     weightFiltered,
     scoresBySlug,
     options,
     (slug) =>
-      stderr(
-        `Warning: Could not determine the reasoning status for model ${slug}; ` +
+      reportMissingData(
+        slug,
+        `Could not determine the reasoning status for model ${slug}; ` +
           "excluding it from instruct/reasoning filtering.",
       ),
   );
-  if (reasoningFiltered.length === 0) {
-    throw new Error(
-      "No models remain after applying the instruct/reasoning filter.",
-    );
-  }
+  ensureModelsRemain(
+    reasoningFiltered,
+    "No models remain after applying the instruct/reasoning filter.",
+  );
 
   const scoreFiltered = filterByScore(
     reasoningFiltered,
     scoresBySlug,
     options,
     (slug) =>
-      stderr(
-        `Warning: Could not determine a numeric Intelligence Index score for model ${slug}; ` +
+      reportMissingData(
+        slug,
+        `Could not determine a numeric Intelligence Index score for model ${slug}; ` +
           "excluding it from score filtering.",
       ),
   );
-  if (scoreFiltered.length === 0) {
-    throw new Error("No models remain after applying the score range filter.");
-  }
+  ensureModelsRemain(scoreFiltered, "No models remain after applying the score range filter.");
   let selected = scoreFiltered;
   if (options.model) {
     selected = selectHighestScoringVariants(
@@ -1403,9 +1428,11 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
       catalogBySlug,
       scoresBySlug,
       (slug) =>
-        stderr(
-          `Warning: Could not determine the release for model ${slug}; ` +
+        reportMissingData(
+          slug,
+          `Could not determine the release for model ${slug}; ` +
             "retaining it without model grouping.",
+          false,
         ),
     );
   }
@@ -1415,9 +1442,11 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
       catalogBySlug,
       scoresBySlug,
       (slug) =>
-        stderr(
-          `Warning: Could not determine the lab for model ${slug}; ` +
+        reportMissingData(
+          slug,
+          `Could not determine the lab for model ${slug}; ` +
             "retaining it without lab grouping.",
+          false,
         ),
     );
   }
@@ -1505,6 +1534,7 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
       `Excluded ${reasoningFiltered.length - scoreFiltered.length} models by score range.`,
     );
   }
+  reportMissingDataSummary();
   if (groupedCount < scoreFiltered.length) {
     stderr(
       `Removed ${scoreFiltered.length - groupedCount} lower-scoring entries during grouping.`,

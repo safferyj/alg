@@ -142,6 +142,7 @@ test("parses aliases, inline values, and canonical argument order", () => {
   const args = [
     "-2",
     "-j",
+    "-w",
     "-x",
     "50",
     "-n",
@@ -179,6 +180,7 @@ test("parses aliases, inline values, and canonical argument order", () => {
   assert.equal(options.instruct, true);
   assert.equal(options.reasoning, true);
   assert.equal(options.json, true);
+  assert.equal(options.warn, true);
   assert.equal(options.two, true);
   assert.equal(options.inputUrl.searchParams.get("models"), "one,two");
   assert.deepEqual(getCanonicalArguments(args), [
@@ -206,6 +208,7 @@ test("parses aliases, inline values, and canonical argument order", () => {
     "10",
     "--url",
     "https://artificialanalysis.ai/?models=one,two",
+    "--warn",
     "--two",
     "--json",
   ]);
@@ -226,11 +229,14 @@ test("parses aliases, inline values, and canonical argument order", () => {
     "--lab",
     "--top-10",
     "--url",
+    "--warn",
   ]);
-  assert.deepEqual(getCanonicalArguments(["--json", "-h"]), [
+  assert.deepEqual(getCanonicalArguments(["--json", "-h", "-w"]), [
+    "--warn",
     "--json",
     "--help",
   ]);
+  assert.equal(parseArguments(["--warn"]).warn, true);
 });
 
 test("rejects invalid values and contradictory ranges", () => {
@@ -791,52 +797,157 @@ test("runs the full deterministic CLI path with injected network and file adapte
   assert.match(stderr.join("\n"), /Kept 3 of 100 requested models/);
 });
 
-test("warns when --lab encounters a model without lab data", async () => {
+test("per-model missing-data warnings require --warn", async () => {
   const fixture = buildRunFixture({ missingLabSlug: "fixture-model-0" });
-  const stdout = [];
-  const stderr = [];
-  const result = await run(
+  const quietStdout = [];
+  const quietStderr = [];
+  const quietResult = await run(
     ["--lab", "--top", "20"],
     {
       site: "https://fixture.test",
       fetchImpl: fixture.fetchImpl,
-      stdout: (...values) => stdout.push(values.join(" ")),
-      stderr: (...values) => stderr.push(values.join(" ")),
+      stdout: (...values) => quietStdout.push(values.join(" ")),
+      stderr: (...values) => quietStderr.push(values.join(" ")),
     },
   );
 
-  assert.equal(result.selected.length, 20);
+  assert.equal(quietResult.selected.length, 20);
+  assert.doesNotMatch(quietStderr.join("\n"), /Warning: Could not determine the lab/);
+  assert.doesNotMatch(quietStderr.join("\n"), /due to missing data/);
+
+  const warnStdout = [];
+  const warnStderr = [];
+  const warnResult = await run(
+    ["--lab", "--warn", "--top", "20"],
+    {
+      site: "https://fixture.test",
+      fetchImpl: fixture.fetchImpl,
+      stdout: (...values) => warnStdout.push(values.join(" ")),
+      stderr: (...values) => warnStderr.push(values.join(" ")),
+    },
+  );
+
+  assert.equal(warnResult.selected.length, 20);
   assert.match(
-    stderr.join("\n"),
+    warnStderr.join("\n"),
     /Warning: Could not determine the lab for model fixture-model-0; retaining it without lab grouping\./,
   );
-  assert.equal(stdout.length, 1);
+  assert.doesNotMatch(warnStderr.join("\n"), /due to missing data/);
+  assert.equal(quietStdout.length, 1);
+  assert.equal(warnStdout.length, 1);
 });
 
-test("warns and continues when an active filter lacks model metadata", async () => {
+test("summarizes missing-data exclusions and warns per model only with --warn", async () => {
   const fixture = buildRunFixture();
-  const stdout = [];
+  const args = [
+    "--url",
+    "https://fixture.test/?models=fixture-model-0,current-alpha",
+    "--open",
+  ];
+  const quietStdout = [];
+  const quietStderr = [];
+  const quietResult = await run(
+    args,
+    {
+      site: "https://fixture.test",
+      fetchImpl: fixture.fetchImpl,
+      stdout: (...values) => quietStdout.push(values.join(" ")),
+      stderr: (...values) => quietStderr.push(values.join(" ")),
+    },
+  );
+
+  assert.deepEqual(quietResult.selected, ["current-alpha"]);
+  assert.doesNotMatch(quietStderr.join("\n"), /Warning:/);
+  assert.match(quietStderr.join("\n"), /Excluded 1 model due to missing data\./);
+
+  const warnStdout = [];
+  const warnStderr = [];
+  const warnResult = await run(
+    [...args, "-w"],
+    {
+      site: "https://fixture.test",
+      fetchImpl: fixture.fetchImpl,
+      stdout: (...values) => warnStdout.push(values.join(" ")),
+      stderr: (...values) => warnStderr.push(values.join(" ")),
+    },
+  );
+
+  assert.deepEqual(warnResult.selected, ["current-alpha"]);
+  assert.match(
+    warnStderr.join("\n"),
+    /Warning: Could not determine the weight class for model fixture-model-0; excluding it from open\/closed filtering\./,
+  );
+  assert.match(warnStderr.join("\n"), /Excluded 1 model due to missing data\./);
+  assert.equal(quietStdout.length, 1);
+  assert.equal(warnStdout.length, 1);
+});
+
+test("reports missing-data exclusions when a filter removes every model", async () => {
+  const fixture = buildRunFixture();
+  const stderr = [];
+
+  await assert.rejects(
+    run(
+      [
+        "--url",
+        "https://fixture.test/?models=fixture-model-0",
+        "--open",
+      ],
+      {
+        site: "https://fixture.test",
+        fetchImpl: fixture.fetchImpl,
+        stdout: () => {},
+        stderr: (...values) => stderr.push(values.join(" ")),
+      },
+    ),
+    /No models remain after applying the weight-class filter/,
+  );
+
+  assert.match(stderr.join("\n"), /Excluded 1 model due to missing data\./);
+  assert.doesNotMatch(stderr.join("\n"), /Warning:/);
+});
+
+test("missing size data treated as unknown is not counted as excluded", async () => {
+  const fixture = buildRunFixture();
   const stderr = [];
   const result = await run(
     [
       "--url",
-      "https://fixture.test/?models=fixture-model-0,current-alpha",
-      "--open",
+      "https://fixture.test/?models=fixture-model-0",
+      "--size",
+      "unknown",
     ],
     {
       site: "https://fixture.test",
       fetchImpl: fixture.fetchImpl,
-      stdout: (...values) => stdout.push(values.join(" ")),
+      stdout: () => {},
       stderr: (...values) => stderr.push(values.join(" ")),
     },
   );
 
-  assert.deepEqual(result.selected, ["current-alpha"]);
-  assert.match(
-    stderr.join("\n"),
-    /Warning: Could not determine the weight class for model fixture-model-0; excluding it from open\/closed filtering\./,
+  assert.deepEqual(result.selected, ["fixture-model-0"]);
+  assert.doesNotMatch(stderr.join("\n"), /due to missing data/);
+  assert.doesNotMatch(stderr.join("\n"), /Warning:/);
+
+  const excludedStderr = [];
+  const excludedResult = await run(
+    [
+      "--url",
+      "https://fixture.test/?models=fixture-model-0,current-beta",
+      "--size",
+      "large",
+    ],
+    {
+      site: "https://fixture.test",
+      fetchImpl: fixture.fetchImpl,
+      stdout: () => {},
+      stderr: (...values) => excludedStderr.push(values.join(" ")),
+    },
   );
-  assert.equal(stdout.length, 1);
+
+  assert.deepEqual(excludedResult.selected, ["current-beta"]);
+  assert.match(excludedStderr.join("\n"), /Excluded 1 model due to missing data\./);
+  assert.doesNotMatch(excludedStderr.join("\n"), /Warning:/);
 });
 
 test("keeps the executable help path working in a child process", () => {
@@ -869,6 +980,7 @@ test("keeps the executable help path working in a child process", () => {
     "--lab",
     "--top",
     "--url",
+    "--warn",
     "--two",
     "--json",
     "--help",
@@ -902,6 +1014,7 @@ test("keeps help and README explanations in canonical option order", async () =>
   ]);
 
   assertInOrder(readme, [
+    "Models excluded because an active filter requires unavailable data are counted",
     "If neither `--open` nor `--closed` is specified",
     "If neither `--reasoning` nor `--instruct` is specified",
     "If neither `--current` nor `--deprecated` is specified",

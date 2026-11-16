@@ -43,7 +43,8 @@ node alg.mjs
 ```
 
 The filtered URL is printed to standard output. The summary reports how many
-models were retained and which filters reduced the set.
+models were retained, which filters reduced the set, and how many were excluded
+because required data was missing.
 
 ## Options
 
@@ -71,16 +72,23 @@ models were retained and which filters reduced the set.
 -l, --lab              Include only the best entry from each lab.
 -t, --top <n>          Return the top n entries by Intelligence Index score.
 -u, --url <url>        Use the models from an existing Artificial Analysis URL.
+-w, --warn             Print per-model warnings for missing data encountered
+                       during filtering or grouping.
 -2, --two              Print two URLs, both the main entry page URL and
                        additionally the Models page URL.
 -j, --json             Write selected models to a timestamped JSON file.
 -h, --help             Show this help.
 ```
 
+Models excluded because an active filter requires unavailable data are counted
+in a summary. Use `--warn` to print per-model warnings for missing data
+encountered during filtering or grouping. Without `--warn`, those details are
+suppressed.
+
 If neither `--open` nor `--closed` is specified, both weight classes are
 included. Supplying both includes both classes explicitly.
 When `--open` or `--closed` is active and a model has no weight-class data, the
-model is excluded from that filter and a warning is printed.
+model is excluded from that filter.
 
 If neither `--reasoning` nor `--instruct` is specified, both model response
 styles are included. Supplying both includes both styles explicitly. `--reasoning`
@@ -88,7 +96,7 @@ includes only reasoning models, while `--instruct` includes only non-reasoning
 models.
 These flags use Artificial Analysis's `isReasoning` score-manifest field; if that
 field is unavailable for a requested model, the model is excluded from the
-filter and a warning is printed rather than guessing.
+filter rather than guessing.
 
 If neither `--current` nor `--deprecated` is specified, no deprecation-status
 filtering is applied. Supplying both includes both statuses explicitly.
@@ -101,7 +109,7 @@ node alg.mjs --current --top 10
 ```
 
 When an active current/deprecated filter encounters a model without deprecation
-data, the model is excluded from that filter and a warning is printed.
+data, the model is excluded from that filter.
 
 `--before` is an exclusive release-date filter and `--after` is inclusive. Both
 require a valid ISO calendar date in `YYYY-MM-DD` format. They can be combined
@@ -112,7 +120,7 @@ node alg.mjs --after 2025-01-01 --before 2026-01-01
 ```
 
 Models without a valid release date are excluded from an active `--before` or
-`--after` filter and a warning is printed.
+`--after` filter.
 
 `--min` and `--max` are inclusive against AA's rounded display score. To align
 the raw decimal Intelligence Index score with that display, `--min n` uses a
@@ -126,7 +134,6 @@ node alg.mjs --min 40 --max 50 --model --top 10
 ```
 
 Entries without a numeric score are excluded when either threshold is supplied.
-When a score is missing while either threshold is active, a warning is printed.
 
 `--size` is case-insensitive. Separate multiple alternatives with comma (`,`) to
 match any of them. **Do not include spaces in the size string.** Accepted values
@@ -139,8 +146,8 @@ named classes as well as in `unknown`:
 node alg.mjs --size large,medium
 ```
 
-When `--size` is active and a model has no size-class data, a warning is printed
-and the model is treated as `unknown`.
+When `--size` is active and a model has no size-class data, the model is treated
+as `unknown`.
 
 `--filter` is a case-insensitive substring filter on model names. Separate
 multiple alternatives with comma (`,`) to match any of them. **Do not include
@@ -151,18 +158,17 @@ node alg.mjs --filter qwen3.8,qwen3.6
 ```
 
 The filter can be combined with every other option, including `--url`.
-Models without a name are excluded from an active `--filter` and a warning is
-printed.
+Models without a name are excluded from an active `--filter`.
 
 Without `--model` or `--lab`, no grouping is applied and the full requested model
 list is retained. `--model` and `--lab` are alternative grouping modes; supplying
 both is redundant and has the same result as `--lab`.
 
-When `--model` encounters a model without release data, it prints a warning and
-retains that model as an ungrouped entry.
+When `--model` encounters a model without release data, it retains that model as
+an ungrouped entry.
 
-When `--lab` encounters a model without lab data, it prints a warning and
-retains that model as an ungrouped entry.
+When `--lab` encounters a model without lab data, it retains that model as an
+ungrouped entry.
 
 Without `--url`, all models in the current Artificial Analysis catalog are used.
 
@@ -238,7 +244,7 @@ value, are retained in `arguments` metadata. The filename segments and
 `arguments` array use this canonical execution order:
 `--open`, `--closed`, `--reasoning`, `--instruct`, `--current`, `--deprecated`,
 `--before`, `--after`, `--min`, `--max`, `--size`, `--filter`, `--model`,
-`--lab`, `--top`, `--url`, `--two`, `--json`, `--help`. Every argument uses
+`--lab`, `--top`, `--url`, `--warn`, `--two`, `--json`, `--help`. Every argument uses
 the full flag name, and value-taking flags are represented as separate
 flag/value entries. For readability, each flag/value pair is formatted on one
 line in the file; the parsed JSON remains the same flat argument array.
