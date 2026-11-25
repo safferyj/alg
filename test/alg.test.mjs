@@ -636,12 +636,13 @@ test("extracts page payloads and decrypts a score manifest fixture", async () =>
   const manifest = {
     models: [{ slug: "fixture", intelligenceIndex: 50 }],
   };
-  const payloads = extractFlightPayloads(
-    flightHtml({
-      reference: { path: "/data/manifest", key },
-      nested: { label: "fixture" },
-    }),
-  );
+  const html = `<script>self.__next_f.push([1,${JSON.stringify(
+    [
+      `1:${JSON.stringify({ nested: { label: "fixture" } })}`,
+      `2:${JSON.stringify({ manifest: { path: "/data/manifest", key } })}`,
+    ].join("\n"),
+  )}])</script>`;
+  const payloads = extractFlightPayloads(html);
   const encrypted = encryptManifest(manifest, key);
   const found = await findScoreManifest(
     payloads,
@@ -652,6 +653,7 @@ test("extracts page payloads and decrypts a score manifest fixture", async () =>
     },
   );
 
+  assert.deepEqual(payloads.map(({ id }) => id), ["1", "2"]);
   assert.deepEqual(found, manifest);
 });
 

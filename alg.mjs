@@ -286,18 +286,24 @@ function extractFlightPayloads(html) {
       continue;
     }
 
-    const separator = payload.indexOf(":");
-    if (separator === -1) {
+    if (typeof payload !== "string") {
       continue;
     }
 
-    try {
-      payloads.push({
-        id: payload.slice(0, separator),
-        value: JSON.parse(payload.slice(separator + 1)),
-      });
-    } catch {
-      continue;
+    for (const row of payload.split("\n")) {
+      const separator = row.indexOf(":");
+      if (separator === -1) {
+        continue;
+      }
+
+      try {
+        payloads.push({
+          id: row.slice(0, separator),
+          value: JSON.parse(row.slice(separator + 1)),
+        });
+      } catch {
+        continue;
+      }
     }
   }
 
